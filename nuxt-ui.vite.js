@@ -36,11 +36,14 @@ export default {
         },
         tooltip: {
             slots: {
-                // z-[2500]: slot overrides replace the full class string, dropping Nuxt UI's default
+                // z-3002: slot overrides replace the full class string, dropping Nuxt UI's default
                 // z-50. Without an explicit z-index, tooltips render behind the sticky header (z-10)
-                // due to the stacking context created by #main-wrapper's transform:scale(). 2500
-                // clears all app dialogs (z-1000–2001) and the ConnectButton dropdown (z-2100).
-                content: "ring-2 ring-primary max-w-sm lg:max-w-lg h-fit z-[2500]",
+                // due to the stacking context created by #main-wrapper's transform:scale(). 3002
+                // clears all app dialogs (z-1000–2001), the ConnectButton dropdown (z-2100) AND
+                // UModal content (z-3001) — HelpIcon tooltips inside OptionsDialog were invisible
+                // at the previous 2500. Tooltips are hover-transient, so topmost is always safe:
+                // an element occluded by an overlay can't be hovered in the first place.
+                content: "ring-2 ring-primary max-w-sm lg:max-w-lg h-fit z-3002",
                 arrow: "fill-primary stroke-primary",
                 text: "whitespace-normal",
             },

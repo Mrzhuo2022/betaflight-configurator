@@ -1,6 +1,7 @@
 import { computed, onUnmounted } from "vue";
 import { useAiAssistantStore } from "@/stores/aiAssistant";
 import { useConnectionStore } from "@/stores/connection";
+import { useDialog } from "@/composables/useDialog";
 import { AiApi, AiApiError } from "@/js/AiApi";
 import { chatWithTools } from "./useAiToolCall";
 import { buildTuneContextPayload, TUNE_PATH_ROOTS } from "./buildContext";
@@ -164,9 +165,32 @@ function makeApi(store) {
     return new AiApi({ baseUrl: store.baseUrl, apiKey: store.apiKey });
 }
 
+/**
+ * Format the session's applied-change batches as a context block for the model.
+ * Returns "" when nothing has been applied yet. Exported for unit testing.
+ */
+export function formatAppliedChangeLog(batches) {
+    if (!Array.isArray(batches) || !batches.length) {
+        return "";
+    }
+    const lines = ["## Changes already applied in this session (oldest first)"];
+    for (const batch of batches) {
+        const when = new Date(batch.ts).toISOString();
+        for (const c of batch.changes) {
+            lines.push(`- [${when}] ${c.path}: ${c.current} → ${c.suggested}`);
+        }
+    }
+    lines.push(
+        "When diagnosing, compare the current tune against these earlier steps: " +
+            "if a previously applied change did not fix the reported issue, say so and adjust the strategy rather than repeating it.",
+    );
+    return lines.join("\n");
+}
+
 export function useAiAssistant() {
     const store = useAiAssistantStore();
     const connectionStore = useConnectionStore();
+    const dialog = useDialog();
 
     const isConnected = computed(() => connectionStore.connectionValid);
     const isConfigured = computed(() => store.isConfigured);
@@ -229,9 +253,13 @@ export function useAiAssistant() {
 
         try {
             // Readable summary first, full JSON second. Models reason better over the summary
-            // and use JSON only for exact values/paths.
+            // and use JSON only for exact values/paths. Use the TTL cache for follow-up
+            // messages to avoid 10 MSP round-trips on every single chat turn.
             store.setFcFetchStatus("loading");
-            const tunePayload = await buildTuneContextPayload();
+            const isFirstInSession = store.messages.filter((m) => m.role === "user").length <= 1;
+            const tunePayload = await buildTuneContextPayload({
+                forceRefresh: isFirstInSession,
+            });
             const tuneContext = tunePayload?.context || null;
 
             if (tunePayload) {
@@ -269,6 +297,13 @@ export function useAiAssistant() {
             } else if (!extraContext) {
                 contextNote =
                     "No flight controller is currently connected and no blackbox data is available. Cannot perform diagnostic.";
+            }
+
+            // Applied-change history: lets the model reason about before/after across the
+            // tuning session ("we already raised D by 15% last step and propwash persists…").
+            const changeLogNote = formatAppliedChangeLog(store.appliedChangeLog);
+            if (changeLogNote) {
+                contextNote += `\n\n${changeLogNote}`;
             }
 
             // Selectively inject relevant Betaflight wiki docs based on keyword matching
@@ -344,10 +379,14 @@ export function useAiAssistant() {
             store.addMessage("assistant", content, suggestion, reasoning);
             return suggestion ?? content;
         } catch (e) {
+            // Preserve partial streaming content if the stream failed mid-way — the user
+            // may find the partial analysis useful rather than losing it entirely.
+            const partial = store.streamingContent || "";
             store.clearStreamingContent();
             const msg = e instanceof AiApiError ? e.message : `AI request failed: ${e.message}`;
             store.setError(msg);
-            store.addMessage("assistant", `⚠️ ${msg}`);
+            const content = partial ? `${partial}\n\n⚠️ ${msg}` : `⚠️ ${msg}`;
+            store.addMessage("assistant", content, null, "", true);
             gui_log(`AI assistant error: ${msg}`);
             throw e;
         } finally {
@@ -384,7 +423,10 @@ export function useAiAssistant() {
         _cliAbort = new AbortController();
         try {
             const api = makeApi(store);
-            const systemPrompt = `${SYSTEM_PROMPT}\n\n你可以使用 cli_diff、cli_get、cli_status 工具来读取飞控参数。遇到不确定的问题时先用工具获取数据再回答。`;
+            const systemPrompt =
+                `${SYSTEM_PROMPT}\n\n你可以使用 cli_diff、cli_get、cli_status 工具来读取飞控参数。遇到不确定的问题时先用工具获取数据再回答。` +
+                `\n你还可以在用户明确要求修改参数时使用 cli_set 修改参数（每次修改用户都会确认），全部修改完成后用 cli_save 保存并重启。` +
+                `未经用户要求不要主动修改参数。`;
             const messages = [
                 { role: "system", content: systemPrompt },
                 ...store.messages
@@ -401,16 +443,54 @@ export function useAiAssistant() {
                     temperature: store.temperature,
                     reasoningEffort: store.reasoningEffort,
                 },
-                { signal: _cliAbort.signal },
+                {
+                    signal: _cliAbort.signal,
+                    // Every FC write goes through a YesNo dialog. The command string shown to
+                    // the pilot is the exact sanitized CLI line that will run — nothing else.
+                    confirmWrite: (command) =>
+                        dialog.showYesNo(
+                            i18n.getMessage("aiCliWriteConfirmTitle") || "AI wants to change FC settings",
+                            i18n.getMessage("aiCliWriteConfirmBody", { command }) ||
+                                `Allow the AI assistant to run this CLI command?\n\n${command}`,
+                        ),
+                    onToolCall: (fnName, fnArgs) => {
+                        // Show progress in the UI so the user knows the AI is executing CLI commands.
+                        let label = fnName;
+                        if (fnName === "cli_get") {
+                            // Model-generated args may be malformed JSON — never let that abort the chat.
+                            try {
+                                const name = JSON.parse(fnArgs || "{}").name;
+                                if (name) label = `cli_get ${name}`;
+                            } catch {
+                                /* keep bare fnName */
+                            }
+                        }
+                        store.setToolCallStatus(label);
+                        gui_log(`AI: tool call → ${label}`);
+                    },
+                    // Live token display. `full` restarts per round (each tool round is its own
+                    // completion), so always overwrite rather than append. Clear the tool status
+                    // once answer tokens arrive — the model is done calling tools this round.
+                    onDelta: (_chunk, full) => {
+                        store.setToolCallStatus("");
+                        store.setStreamingContent(full);
+                    },
+                    onReasoning: (_chunk, full) => store.setStreamingReasoning(full),
+                },
             );
 
             if (reply === "(cancelled)") {
+                store.clearStreamingContent();
                 store.addMessage("assistant", `⚠️ ${i18n.getMessage("aiCancelled") || "Cancelled."}`);
                 return "";
             }
+            store.clearStreamingContent();
             store.addMessage("assistant", reply);
             return reply;
         } catch (e) {
+            // Preserve partial streamed content — same rationale as the runChat error path.
+            const partial = store.streamingContent || "";
+            store.clearStreamingContent();
             // User-initiated cancel is not an error worth surfacing as a failure.
             if (_cliAbort?.signal?.aborted || e?.message === "AI request was cancelled.") {
                 store.addMessage("assistant", `⚠️ ${i18n.getMessage("aiCancelled") || "Cancelled."}`);
@@ -418,7 +498,8 @@ export function useAiAssistant() {
             }
             const msg = e instanceof AiApiError ? e.message : `CLI chat failed: ${e.message}`;
             store.setError(msg);
-            store.addMessage("assistant", `⚠️ ${msg}`);
+            const content = partial ? `${partial}\n\n⚠️ ${msg}` : `⚠️ ${msg}`;
+            store.addMessage("assistant", content, null, "", true);
             gui_log(`AI CLI tool error: ${msg}`);
             throw e;
         } finally {
@@ -499,7 +580,7 @@ export function useAiAssistant() {
         }
         store.setFcFetchStatus("loading");
         try {
-            const payload = await buildTuneContextPayload();
+            const payload = await buildTuneContextPayload({ forceRefresh: true });
             if (!payload) {
                 store.setLastFcSummary("");
                 store.setFcFetchStatus("error", "Snapshot was null");
@@ -587,6 +668,7 @@ export function useAiAssistant() {
         lastError: computed(() => store.lastError),
         streamingContent: computed(() => store.streamingContent),
         streamingReasoning: computed(() => store.streamingReasoning),
+        toolCallStatus: computed(() => store.toolCallStatus),
         reasoningEffort: computed(() => store.reasoningEffort),
         setReasoningEffort: (v) => store.setReasoningEffort(v),
         // FC snapshot terminal
@@ -615,6 +697,8 @@ export function useAiAssistant() {
         fetchModels,
         setBlackboxDigest: (d) => store.setBlackboxDigest(d),
         clearBlackboxDigest: () => store.clearBlackboxDigest(),
+        recordAppliedChanges: (changes) => store.recordAppliedChanges(changes),
+        popFailedExchange: () => store.popFailedExchange(),
         syncSettings: () => store.syncFromStorage(),
     };
 }

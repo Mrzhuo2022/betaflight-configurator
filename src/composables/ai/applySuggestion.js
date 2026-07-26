@@ -8,6 +8,7 @@ import { useMspCliSession, isMspCliSupported, saveAndReconnect } from "@/composa
 import { useReboot } from "@/composables/useReboot";
 import { normalizeParamPath, validateParamChanges } from "./validateSuggestion";
 import { getByPath, setByPath } from "./pathUtils";
+import { invalidateTuneCache } from "./buildContext";
 import { gui_log } from "@/js/gui_log";
 import { i18n } from "@/js/localization";
 
@@ -177,6 +178,8 @@ export function useApplySuggestion() {
                 throw mspErr;
             }
 
+            // Invalidate the FC snapshot cache so the next chat reads fresh values.
+            invalidateTuneCache();
             gui_log(
                 i18n.getMessage("aiApplySuccessReboot") ||
                     "Parameter changes applied and saved. A reboot is recommended to ensure all settings take effect.",

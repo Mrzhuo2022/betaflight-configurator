@@ -57,6 +57,7 @@
                     </caption>
                     <thead>
                         <tr class="text-dimmed text-left">
+                            <th class="py-0.5 pr-1 w-6"></th>
                             <th class="font-medium py-0.5 pr-2">{{ $t("aiDiagnoseParam") }}</th>
                             <th class="font-medium py-0.5 pr-2">{{ $t("aiDiagnoseCurrent") }}</th>
                             <th class="font-medium py-0.5 pr-2">{{ $t("aiDiagnoseSuggested") }}</th>
@@ -64,9 +65,22 @@
                     </thead>
                     <tbody>
                         <tr v-for="c in f.paramChanges" :key="c.path" class="border-t border-default">
-                            <td class="py-0.5 pr-2 font-mono">{{ c.path }}</td>
+                            <td class="py-0.5 pr-1">
+                                <UCheckbox
+                                    v-model="checked[c.path]"
+                                    size="xs"
+                                    :disabled="appliedOk"
+                                    :aria-label="$t('aiDiagnoseSelectParam')"
+                                />
+                            </td>
+                            <td class="py-0.5 pr-2 font-mono" :class="{ 'opacity-50': checked[c.path] === false }">
+                                {{ c.path }}
+                            </td>
                             <td class="py-0.5 pr-2 font-mono">{{ formatVal(c.current) }}</td>
-                            <td class="py-0.5 pr-2 font-mono text-primary font-semibold">
+                            <td
+                                class="py-0.5 pr-2 font-mono font-semibold"
+                                :class="changeDirectionClass(c.current, c.suggested)"
+                            >
                                 {{ formatVal(c.suggested) }}
                             </td>
                         </tr>
@@ -76,13 +90,13 @@
         </div>
 
         <!-- Apply / Revert actions (only when paramChanges exist) -->
-        <div v-if="allParamChanges.length" class="flex gap-2 mt-1">
+        <div v-if="allParamChanges.length" class="flex gap-2 mt-1 items-center flex-wrap">
             <UButton
                 v-if="!appliedOk"
-                :label="$t('aiDiagnoseApplyAll')"
+                :label="applyLabel"
                 icon="i-lucide-check"
                 :loading="isApplying"
-                :disabled="isApplying"
+                :disabled="isApplying || !selectedChanges.length"
                 size="xs"
                 color="primary"
                 @click="onApply"
@@ -113,7 +127,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useApplySuggestion } from "@/composables/ai/applySuggestion";
 import { useDialog } from "@/composables/useDialog";
 import { i18n } from "@/js/localization";
@@ -121,6 +135,8 @@ import { i18n } from "@/js/localization";
 const props = defineProps({
     suggestion: { type: Object, required: true },
 });
+
+const emit = defineEmits(["applied"]);
 
 const { isApplying, error: applyError, apply } = useApplySuggestion();
 const dialog = useDialog();
@@ -160,6 +176,14 @@ function formatVal(v) {
     return typeof v === "object" ? JSON.stringify(v) : String(v);
 }
 
+/** CSS class for the suggested value cell: green for increase, red for decrease, neutral for same. */
+function changeDirectionClass(current, suggested) {
+    if (typeof current !== "number" || typeof suggested !== "number") return "text-primary";
+    if (suggested > current) return "text-success";
+    if (suggested < current) return "text-warning";
+    return "text-dimmed";
+}
+
 const allParamChanges = computed(() => {
     const changes = [];
     for (const f of findings.value) {
@@ -168,6 +192,23 @@ const allParamChanges = computed(() => {
         }
     }
     return changes;
+});
+
+// Per-path selection state. Everything starts checked; the pilot unticks what
+// they don't want. Keyed by path (paths are unique across findings in practice;
+// duplicates would collapse into one checkbox, which is the sane behaviour anyway).
+const checked = reactive({});
+for (const c of allParamChanges.value) {
+    checked[c.path] = true;
+}
+
+const selectedChanges = computed(() => allParamChanges.value.filter((c) => checked[c.path] !== false));
+
+const applyLabel = computed(() => {
+    const total = allParamChanges.value.length;
+    const sel = selectedChanges.value.length;
+    const base = i18n.getMessage("aiDiagnoseApplyAll") || "Apply";
+    return sel < total ? `${base} (${sel}/${total})` : base;
 });
 
 async function onApply() {
@@ -179,11 +220,14 @@ async function onApply() {
     if (!confirmed) {
         return;
     }
-    const result = await apply(allParamChanges.value);
+    const applying = selectedChanges.value;
+    const result = await apply(applying);
     if (result.ok) {
         appliedOk.value = true;
         revertFn.value = typeof result.revert === "function" ? result.revert : null;
         backupSkipped.value = !!result.backupSkipped;
+        // Notify the conversation so the next diagnose can compare before/after.
+        emit("applied", applying);
     }
 }
 

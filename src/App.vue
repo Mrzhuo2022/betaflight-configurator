@@ -159,14 +159,18 @@ const isSidebarExpanded = computed(() => !sidebarNarrow.value || isRevealed.valu
 
 // AI assistant right rail: embedded on desktop, slide-over on mobile. Same persisted
 // toggle drives both; the two render modes are mutually exclusive by breakpoint.
+// The embedded rail needs real horizontal room: at its 320px minimum plus the sidebar,
+// anything under ~1024px squeezes #content to nothing (or pushes the rail off-screen).
+// Below that, fall back to the slide-over — it overlays instead of competing for width.
 const navigationStore = useNavigationStore();
 const aiAssistantStore = useAiAssistantStore();
 const aiRailContentRef = ref(null);
+const aiRailFits = useMediaQuery("(min-width: 1024px)");
 const renderAiRailEmbedded = computed(
-    () => aiAssistantStore.enabled && !isCompactBreakpoint.value && navigationStore.aiAssistantPanelOpen,
+    () => aiAssistantStore.enabled && aiRailFits.value && navigationStore.aiAssistantPanelOpen,
 );
 const renderAiSlideover = computed(
-    () => aiAssistantStore.enabled && isCompactBreakpoint.value && navigationStore.aiAssistantPanelOpen,
+    () => aiAssistantStore.enabled && !aiRailFits.value && navigationStore.aiAssistantPanelOpen,
 );
 
 // User-resizable AI rail: drag the handle on the rail's left edge. The rail is on the right,

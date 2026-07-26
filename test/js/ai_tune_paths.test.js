@@ -39,6 +39,18 @@ vi.mock("@/js/msp", () => ({
     },
 }));
 
+// Store deps: ConfigStorage + IndexedDB history are irrelevant to the logic under test.
+vi.mock("@/js/ConfigStorage", () => ({
+    get: (_key, def) => (typeof def === "object" ? def : {}),
+    set: vi.fn(),
+    remove: vi.fn(),
+}));
+vi.mock("@/js/AiHistoryDB", () => ({
+    loadHistory: vi.fn(async () => []),
+    saveHistory: vi.fn(async () => {}),
+    clearHistory: vi.fn(async () => {}),
+}));
+
 vi.mock("@/js/msp/MSPCodes", () => ({
     default: {
         MSP_PID: 112,
@@ -342,6 +354,202 @@ describe("AI cli_get parameter sanitization", () => {
     });
 });
 
+describe("AI cli_set value sanitization", () => {
+    it("accepts numbers and enum identifiers", async () => {
+        const { sanitizeCliValue } = await import("../../src/composables/ai/useAiToolCall.js");
+        expect(sanitizeCliValue("45")).toBe("45");
+        expect(sanitizeCliValue("-12")).toBe("-12");
+        expect(sanitizeCliValue("1.5")).toBe("1.5");
+        expect(sanitizeCliValue("ON")).toBe("ON");
+        expect(sanitizeCliValue("ACTUAL")).toBe("ACTUAL");
+        expect(sanitizeCliValue(45)).toBe("45");
+        expect(sanitizeCliValue("  100  ")).toBe("100");
+    });
+
+    it("rejects injection attempts and malformed values", async () => {
+        const { sanitizeCliValue } = await import("../../src/composables/ai/useAiToolCall.js");
+        expect(sanitizeCliValue("1\nsave")).toBeNull();
+        expect(sanitizeCliValue("1;save")).toBeNull();
+        expect(sanitizeCliValue("1=2")).toBeNull();
+        expect(sanitizeCliValue("a b")).toBeNull();
+        expect(sanitizeCliValue("")).toBeNull();
+        expect(sanitizeCliValue(null)).toBeNull();
+        expect(sanitizeCliValue(NaN)).toBeNull();
+        expect(sanitizeCliValue(Infinity)).toBeNull();
+        expect(sanitizeCliValue(undefined)).toBeNull();
+    });
+});
+
+describe("AI cli_set / cli_save write gating", () => {
+    it("rejects write tools when no confirmWrite gate is provided", async () => {
+        const { executeCliTool } = await import("../../src/composables/ai/useAiToolCall.js");
+        const setRes = await executeCliTool("cli_set", JSON.stringify({ name: "p_roll", value: "45" }), {});
+        expect(setRes).toMatch(/not enabled/);
+        const saveRes = await executeCliTool("cli_save", "{}", {});
+        expect(saveRes).toMatch(/not enabled/);
+    });
+
+    it("returns rejected without executing when the user declines", async () => {
+        const { executeCliTool } = await import("../../src/composables/ai/useAiToolCall.js");
+        const confirmWrite = vi.fn(async () => false);
+        const res = await executeCliTool("cli_set", JSON.stringify({ name: "p_roll", value: "45" }), { confirmWrite });
+        expect(confirmWrite).toHaveBeenCalledWith("set p_roll=45");
+        expect(res).toMatch(/^rejected/);
+    });
+
+    it("validates name and value before ever asking for confirmation", async () => {
+        const { executeCliTool } = await import("../../src/composables/ai/useAiToolCall.js");
+        const confirmWrite = vi.fn(async () => true);
+        const badName = await executeCliTool("cli_set", JSON.stringify({ name: "x;save", value: "1" }), {
+            confirmWrite,
+        });
+        expect(badName).toMatch(/invalid parameter name/);
+        const badValue = await executeCliTool("cli_set", JSON.stringify({ name: "p_roll", value: "1\nsave" }), {
+            confirmWrite,
+        });
+        expect(badValue).toMatch(/invalid value/);
+        expect(confirmWrite).not.toHaveBeenCalled();
+    });
+});
+
+describe("AI cli_save terminates the tool loop", () => {
+    it("sets sink.terminate after a confirmed successful save", async () => {
+        const { saveAndReconnect } = await import("@/composables/useMspCliSession");
+        saveAndReconnect.mockResolvedValueOnce({ ok: true, error: null });
+        const { executeCliTool } = await import("../../src/composables/ai/useAiToolCall.js");
+        const sink = { confirmWrite: vi.fn(async () => true) };
+        const res = await executeCliTool("cli_save", "{}", sink);
+        expect(res).toMatch(/^saved/);
+        expect(sink.terminate).toBe(true);
+    });
+
+    it("does not terminate on rejection or failure", async () => {
+        const { saveAndReconnect } = await import("@/composables/useMspCliSession");
+        const { executeCliTool } = await import("../../src/composables/ai/useAiToolCall.js");
+
+        const rejected = { confirmWrite: vi.fn(async () => false) };
+        await executeCliTool("cli_save", "{}", rejected);
+        expect(rejected.terminate).toBeUndefined();
+
+        saveAndReconnect.mockResolvedValueOnce({ ok: false, error: new Error("boom") });
+        const failed = { confirmWrite: vi.fn(async () => true) };
+        const res = await executeCliTool("cli_save", "{}", failed);
+        expect(res).toMatch(/^Error/);
+        expect(failed.terminate).toBeUndefined();
+    });
+});
+
+describe("AI streamed tool-call fragment reassembly", () => {
+    function sseResponse(events) {
+        const payload = events.map((e) => `data: ${typeof e === "string" ? e : JSON.stringify(e)}\n\n`).join("");
+        return new Response(payload, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+
+    it("accumulates tool_call deltas split across chunks into complete calls", async () => {
+        const { AiApi } = await import("../../src/js/AiApi.js");
+        const api = new AiApi({ baseUrl: "https://example.test/v1", apiKey: "k" });
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            sseResponse([
+                {
+                    choices: [
+                        {
+                            delta: {
+                                tool_calls: [
+                                    {
+                                        index: 0,
+                                        id: "call_1",
+                                        type: "function",
+                                        function: { name: "cli_get", arguments: "" },
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                },
+                { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"na' } }] } }] },
+                { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'me":"p_roll"}' } }] } }] },
+                "[DONE]",
+            ]),
+        );
+        const result = await api.streamChat([{ role: "user", content: "x" }], { tools: [] });
+        expect(result.toolCalls).toEqual([
+            { id: "call_1", type: "function", function: { name: "cli_get", arguments: '{"name":"p_roll"}' } },
+        ]);
+        expect(result.content).toBe("");
+        globalThis.fetch.mockRestore();
+    });
+
+    it("returns toolCalls null for a plain text stream", async () => {
+        const { AiApi } = await import("../../src/js/AiApi.js");
+        const api = new AiApi({ baseUrl: "https://example.test/v1", apiKey: "k" });
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            sseResponse([{ choices: [{ delta: { content: "hello" } }] }, "[DONE]"]),
+        );
+        const result = await api.streamChat([{ role: "user", content: "x" }], {});
+        expect(result.content).toBe("hello");
+        expect(result.toolCalls).toBeNull();
+        globalThis.fetch.mockRestore();
+    });
+});
+
+describe("AI retry removes the failed exchange", () => {
+    it("pops the trailing error message and its user question, returning the question", async () => {
+        const { createPinia, setActivePinia } = await import("pinia");
+        setActivePinia(createPinia());
+        const { useAiAssistantStore } = await import("../../src/stores/aiAssistant.js");
+        const store = useAiAssistantStore();
+        store.addMessage("user", "first question");
+        store.addMessage("assistant", "fine answer");
+        store.addMessage("user", "second question");
+        store.addMessage("assistant", "⚠️ timeout", null, "", true);
+
+        expect(store.popFailedExchange()).toBe("second question");
+        expect(store.messages).toHaveLength(2);
+        expect(store.messages[1].content).toBe("fine answer");
+    });
+
+    it("is a no-op when the last message is not an error", async () => {
+        const { createPinia, setActivePinia } = await import("pinia");
+        setActivePinia(createPinia());
+        const { useAiAssistantStore } = await import("../../src/stores/aiAssistant.js");
+        const store = useAiAssistantStore();
+        store.addMessage("user", "q");
+        store.addMessage("assistant", "a");
+
+        expect(store.popFailedExchange()).toBe("");
+        expect(store.messages).toHaveLength(2);
+
+        // Empty conversation is also a no-op.
+        store.clearMessages();
+        expect(store.popFailedExchange()).toBe("");
+    });
+});
+
+describe("AI applied-change log formatting", () => {
+    it("returns empty string when nothing was applied", async () => {
+        const { formatAppliedChangeLog } = await import("../../src/composables/ai/useAiAssistant.js");
+        expect(formatAppliedChangeLog([])).toBe("");
+        expect(formatAppliedChangeLog(null)).toBe("");
+        expect(formatAppliedChangeLog(undefined)).toBe("");
+    });
+
+    it("lists each change with path and before/after values", async () => {
+        const { formatAppliedChangeLog } = await import("../../src/composables/ai/useAiAssistant.js");
+        const out = formatAppliedChangeLog([
+            {
+                ts: Date.UTC(2026, 6, 26, 12, 0, 0),
+                changes: [
+                    { path: "PIDS[0][2]", current: 30, suggested: 35 },
+                    { path: "FILTER_CONFIG.gyro_lowpass_dyn_min_hz", current: 250, suggested: 300 },
+                ],
+            },
+        ]);
+        expect(out).toContain("PIDS[0][2]: 30 → 35");
+        expect(out).toContain("FILTER_CONFIG.gyro_lowpass_dyn_min_hz: 250 → 300");
+        expect(out).toContain("2026-07-26");
+    });
+});
+
 describe("AI param range validation across all FC roots", () => {
     it("enforces ranges on the previously-unvalidated MIXER/MOTOR/PID_ADVANCED_CONFIG roots", async () => {
         const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
@@ -482,35 +690,67 @@ describe("AI chatWithTools loop", () => {
     it("returns text content when AI responds without tool calls", async () => {
         const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
         const mockApi = {
-            chat: vi.fn().mockResolvedValue({ content: "Hello!", toolCalls: null }),
+            streamChat: vi.fn().mockResolvedValue({ content: "Hello!", toolCalls: null }),
         };
         const result = await chatWithTools(mockApi, [{ role: "user", content: "Hi" }]);
         expect(result).toBe("Hello!");
-        expect(mockApi.chat).toHaveBeenCalledTimes(1);
+        expect(mockApi.streamChat).toHaveBeenCalledTimes(1);
     });
 
     it("returns (cancelled) when signal is aborted before a round", async () => {
         const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
         const controller = new AbortController();
         controller.abort();
-        const mockApi = { chat: vi.fn() };
+        const mockApi = { streamChat: vi.fn() };
         const result = await chatWithTools(mockApi, [], {}, { signal: controller.signal });
         expect(result).toBe("(cancelled)");
-        expect(mockApi.chat).not.toHaveBeenCalled();
+        expect(mockApi.streamChat).not.toHaveBeenCalled();
     });
 
     it("returns (AI tool call limit reached) after max rounds", async () => {
         const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
         // Always return a tool call to exhaust the round limit
         const mockApi = {
-            chat: vi.fn().mockResolvedValue({
+            streamChat: vi.fn().mockResolvedValue({
                 content: null,
                 toolCalls: [{ id: "tc1", type: "function", function: { name: "cli_status", arguments: "{}" } }],
             }),
         };
         const result = await chatWithTools(mockApi, [{ role: "user", content: "test" }]);
         expect(result).toBe("(AI tool call limit reached)");
-        expect(mockApi.chat).toHaveBeenCalledTimes(5);
+        expect(mockApi.streamChat).toHaveBeenCalledTimes(5);
+    });
+
+    it("withdraws tools and skips remaining calls after a successful cli_save", async () => {
+        const { saveAndReconnect } = await import("@/composables/useMspCliSession");
+        saveAndReconnect.mockResolvedValueOnce({ ok: true, error: null });
+        const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
+        const streamChat = vi
+            .fn()
+            // Round 1: model calls cli_save AND cli_status in one batch.
+            .mockResolvedValueOnce({
+                content: null,
+                toolCalls: [
+                    { id: "tc1", type: "function", function: { name: "cli_save", arguments: "{}" } },
+                    { id: "tc2", type: "function", function: { name: "cli_status", arguments: "{}" } },
+                ],
+            })
+            // Round 2: final text.
+            .mockResolvedValueOnce({ content: "Done, FC rebooting.", toolCalls: null });
+        const result = await chatWithTools(
+            { streamChat },
+            [{ role: "user", content: "save it" }],
+            {},
+            { confirmWrite: vi.fn(async () => true) },
+        );
+        expect(result).toBe("Done, FC rebooting.");
+        // cli_status after save must be answered with a skip, not executed.
+        const round2Msgs = streamChat.mock.calls[1][0];
+        const toolMsgs = round2Msgs.filter((m) => m.role === "tool");
+        expect(toolMsgs).toHaveLength(2);
+        expect(toolMsgs[1].content).toMatch(/skipped/);
+        // Round 2 request must NOT offer tools (terminate flag withdraws them).
+        expect(streamChat.mock.calls[1][1].tools).toBeUndefined();
     });
 });
 

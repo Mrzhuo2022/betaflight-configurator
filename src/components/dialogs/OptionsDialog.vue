@@ -141,19 +141,19 @@
                     </SettingRow>
                 </UiBox>
 
-                <UiBox :title="$t('aiSettingsTitle')" :help="$t('aiSettingsHelp')">
+                <UiBox :title="$t('aiSettingsTitle')">
                     <SettingRow :label="$t('aiSettingsEnabled')">
                         <USwitch v-model="settings.aiEnabled" size="sm" />
                     </SettingRow>
-                    <SettingRow :label="$t('aiSettingsBaseUrl')" :help="$t('aiSettingsBaseUrlHelp')" full-width>
+                    <SettingColumn :label="$t('aiSettingsBaseUrl')">
                         <UInput
                             v-model="settings.aiBaseUrl"
                             :placeholder="$t('aiSettingsBaseUrlPlaceholder')"
                             size="sm"
                             class="w-full"
                         />
-                    </SettingRow>
-                    <SettingRow :label="$t('aiSettingsApiKey')" :help="$t('aiSettingsApiKeyHelp')" full-width>
+                    </SettingColumn>
+                    <SettingColumn :label="$t('aiSettingsApiKey')">
                         <UInput
                             v-model="settings.aiApiKey"
                             :type="showApiKey ? 'text' : 'password'"
@@ -176,8 +176,8 @@
                                 />
                             </template>
                         </UInput>
-                    </SettingRow>
-                    <SettingRow :label="$t('aiSettingsModel')" :help="$t('aiSettingsModelHelp')" full-width>
+                    </SettingColumn>
+                    <SettingColumn :label="$t('aiSettingsModel')">
                         <div class="flex items-center gap-2 w-full">
                             <USelectMenu
                                 v-model="settings.aiModel"
@@ -207,8 +207,8 @@
                         <p v-else-if="fetchedModelsCount > 0" class="text-xs text-dimmed mt-1">
                             {{ $t("aiModelsFetched", { 1: fetchedModelsCount }) }}
                         </p>
-                    </SettingRow>
-                    <SettingRow :label="$t('aiSettingsTemperature')" :help="$t('aiSettingsTemperatureHelp')" full-width>
+                    </SettingColumn>
+                    <SettingRow :label="$t('aiSettingsTemperature')">
                         <UInput
                             v-model.number="settings.aiTemperature"
                             type="number"
@@ -219,11 +219,7 @@
                             class="w-24"
                         />
                     </SettingRow>
-                    <SettingRow
-                        :label="$t('aiSettingsReasoningEffort')"
-                        :help="$t('aiSettingsReasoningEffortHelp')"
-                        full-width
-                    >
+                    <SettingRow :label="$t('aiSettingsReasoningEffort')">
                         <USelect
                             v-model="settings.aiReasoningEffort"
                             :items="reasoningEffortItems"
@@ -255,6 +251,7 @@ import { DEFAULT_DEVELOPMENT_OPTIONS, resetDevelopmentOptions } from "../../js/u
 import { applyExpertMode } from "../../js/utils/applyExpertMode";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
+import SettingColumn from "../elements/SettingColumn.vue";
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },

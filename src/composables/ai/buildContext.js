@@ -76,6 +76,22 @@ const TUNE_MSP_SEQUENCE = [
 ];
 
 /**
+ * TTL cache for the FC tune snapshot. Avoids firing 10 MSP commands on every
+ * single chat message during multi-turn conversations. The cache is invalidated
+ * when the user applies parameter changes (invalidateTuneCache()) or when the
+ * connection drops.
+ */
+const CACHE_TTL_MS = 30_000;
+let _cachePayload = null;
+let _cacheAt = 0;
+
+/** Invalidate the cached snapshot (called after apply, or when connection drops). */
+export function invalidateTuneCache() {
+    _cachePayload = null;
+    _cacheAt = 0;
+}
+
+/**
  * Fire MSP commands to populate the FC.* tuning fields.
  * @returns {Promise<{ok: string[], failed: Array<{label: string, error: string}>}>}
  */
@@ -295,10 +311,21 @@ function shapeRates(raw) {
  * @param {boolean} [opts.includeFeatures]
  * @returns {Promise<object|null>}
  */
-export async function buildTuneContext({ includeFeatures = true } = {}) {
+export async function buildTuneContext({ includeFeatures = true, forceRefresh = false } = {}) {
     const connectionStore = useConnectionStore();
     if (!connectionStore.connectionValid) {
+        invalidateTuneCache();
         return null;
+    }
+
+    const now = Date.now();
+    if (!forceRefresh && _cachePayload && now - _cacheAt < CACHE_TTL_MS) {
+        // Return a deep clone so callers can't mutate the cache
+        const cached = JSON.parse(JSON.stringify(_cachePayload));
+        if (includeFeatures) {
+            cached.enabledFeatures = captureEnabledFeatures();
+        }
+        return cached;
     }
 
     const fetchResult = await fetchTuningData();
@@ -362,12 +389,18 @@ export async function buildTuneContext({ includeFeatures = true } = {}) {
         },
     };
 
+    context._populated = looksPopulated(context);
+    context._fetch = fetchResult;
+
+    // Cache without enabledFeatures — they're recaptured per call so cached
+    // snapshots always reflect the live feature flags.
+    _cachePayload = JSON.parse(JSON.stringify(context));
+    _cacheAt = Date.now();
+
     if (includeFeatures) {
         context.enabledFeatures = captureEnabledFeatures();
     }
 
-    context._populated = looksPopulated(context);
-    context._fetch = fetchResult;
     return context;
 }
 

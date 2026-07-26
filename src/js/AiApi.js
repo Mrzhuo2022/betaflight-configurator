@@ -193,10 +193,16 @@ export class AiApi {
     /**
      * Streaming chat completion (SSE). Calls onDelta for each answer token and
      * onReasoning for each thinking token (DeepSeek / Qwen / Grok-style CoT).
+     * When `tools` is set, streamed tool-call deltas are accumulated and returned as
+     * `toolCalls` in the same shape as the non-streaming chat() — so callers can run
+     * the same tool loop with live token display.
      *
-     * @returns {Promise<{content:string, reasoning:string}>}
+     * @returns {Promise<{content:string, reasoning:string, toolCalls:Array|null}>}
      */
-    async streamChat(messages, { model, temperature, reasoningEffort, onDelta, onReasoning, signal } = {}) {
+    async streamChat(
+        messages,
+        { model, temperature, reasoningEffort, tools, tool_choice, onDelta, onReasoning, signal } = {},
+    ) {
         if (!this.isConfigured()) {
             throw new AiApiError("AI service is not configured (missing base URL or API key).");
         }
@@ -206,6 +212,8 @@ export class AiApi {
         if (typeof temperature === "number") {
             body.temperature = temperature;
         }
+        if (tools) body.tools = tools;
+        if (tool_choice) body.tool_choice = tool_choice;
         Object.assign(body, resolveReasoningParams(effectiveModel, reasoningEffort));
 
         const IDLE_TIMEOUT_MS = 60000;
@@ -243,6 +251,14 @@ export class AiApi {
             let buf = "";
             let full = "";
             let reasoning = "";
+            // Streamed tool calls arrive as fragments keyed by index: the first delta has
+            // id/name, later deltas append to function.arguments. Accumulate then reassemble.
+            const toolCallsAcc = [];
+            const finish = () => ({
+                content: full,
+                reasoning,
+                toolCalls: toolCallsAcc.length ? toolCallsAcc.filter(Boolean) : null,
+            });
 
             resetIdle();
             while (true) {
@@ -260,7 +276,7 @@ export class AiApi {
                     const dataLine = event.split("\n").find((l) => l.startsWith("data:"));
                     if (!dataLine) continue;
                     const payload = dataLine.slice(5).trim();
-                    if (payload === "[DONE]") return { content: full, reasoning };
+                    if (payload === "[DONE]") return finish();
                     let json;
                     try {
                         json = JSON.parse(payload);
@@ -279,9 +295,25 @@ export class AiApi {
                         reasoning += think;
                         onReasoning?.(think, reasoning);
                     }
+                    if (Array.isArray(delta?.tool_calls)) {
+                        for (const frag of delta.tool_calls) {
+                            const i = frag.index ?? 0;
+                            if (!toolCallsAcc[i]) {
+                                toolCallsAcc[i] = {
+                                    id: frag.id || "",
+                                    type: frag.type || "function",
+                                    function: { name: "", arguments: "" },
+                                };
+                            }
+                            const acc = toolCallsAcc[i];
+                            if (frag.id) acc.id = frag.id;
+                            if (frag.function?.name) acc.function.name += frag.function.name;
+                            if (frag.function?.arguments) acc.function.arguments += frag.function.arguments;
+                        }
+                    }
                 }
             }
-            return { content: full, reasoning };
+            return finish();
         } catch (e) {
             if (e instanceof AiApiError) throw e;
             if (e.name === "AbortError") {

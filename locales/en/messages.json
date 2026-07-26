@@ -10189,6 +10189,30 @@
         "message": "No usable gyro data in this log.",
         "description": "Dialog body when blackbox log contains no usable flight data"
     },
+    "aiExampleDiagnose": {
+        "message": "Run a diagnostic on my tune",
+        "description": "Example prompt shown in empty conversation state"
+    },
+    "aiExampleFilters": {
+        "message": "Explain my filter settings",
+        "description": "Example prompt shown in empty conversation state"
+    },
+    "aiExamplePIDs": {
+        "message": "How can I reduce propwash?",
+        "description": "Example prompt shown in empty conversation state"
+    },
+    "aiCopyMessage": {
+        "message": "Copy message",
+        "description": "Accessible label for the copy button on assistant messages"
+    },
+    "aiRetry": {
+        "message": "Retry",
+        "description": "Accessible label for the retry button on error messages"
+    },
+    "aiExport": {
+        "message": "Export conversation",
+        "description": "Accessible label for the export conversation button"
+    },
     "aiRoleUser": {
         "message": "You"
     },
@@ -10215,17 +10239,11 @@
     "aiSettingsTitle": {
         "message": "AI Assistant"
     },
-    "aiSettingsHelp": {
-        "message": "The AI assistant uses your own OpenAI-compatible API key. Requests go directly from this app to the provider you choose; your key is stored only on this device."
-    },
     "aiSettingsEnabled": {
         "message": "Enable AI assistant"
     },
     "aiSettingsBaseUrl": {
         "message": "API base URL"
-    },
-    "aiSettingsBaseUrlHelp": {
-        "message": "OpenAI-compatible endpoint, e.g. https://api.openai.com/v1. Local Ollama: http://localhost:11434/v1."
     },
     "aiSettingsBaseUrlPlaceholder": {
         "message": "https://api.openai.com/v1"
@@ -10233,17 +10251,11 @@
     "aiSettingsApiKey": {
         "message": "API key"
     },
-    "aiSettingsApiKeyHelp": {
-        "message": "Stored only in this browser/device. Sent exclusively as a Bearer token to the base URL above."
-    },
     "aiSettingsApiKeyPlaceholder": {
         "message": "sk-..."
     },
     "aiSettingsModel": {
         "message": "Model"
-    },
-    "aiSettingsModelHelp": {
-        "message": "Model id accepted by your provider, e.g. gpt-4o, gpt-4o-mini."
     },
     "aiSettingsModelPlaceholder": {
         "message": "gpt-4o"
@@ -10251,14 +10263,8 @@
     "aiSettingsTemperature": {
         "message": "Temperature"
     },
-    "aiSettingsTemperatureHelp": {
-        "message": "Sampling creativity, 0 (focused) to 2 (varied). Tuning advice usually benefits from a low value."
-    },
     "aiSettingsReasoningEffort": {
         "message": "Thinking effort"
-    },
-    "aiSettingsReasoningEffortHelp": {
-        "message": "How hard the model reasons before answering. Off for speed; higher levels let reasoning models (DeepSeek, GPT-5/o-series, Claude, Qwen3) think longer for tougher tuning calls. Routing is automatic per provider."
     },
     "aiReasoningOff": {
         "message": "Off"
@@ -10442,6 +10448,18 @@
     "aiDiagnoseParamChanges": {
         "message": "Suggested parameter changes",
         "description": "Accessible table caption for the parameter changes preview table"
+    },
+    "aiDiagnoseSelectParam": {
+        "message": "Include this change when applying",
+        "description": "Accessible label for the per-parameter checkbox in the diagnosis card"
+    },
+    "aiCliWriteConfirmTitle": {
+        "message": "AI wants to change FC settings",
+        "description": "Title of the confirmation dialog before the AI runs a CLI write command"
+    },
+    "aiCliWriteConfirmBody": {
+        "message": "Allow the AI assistant to run this CLI command?\n\n{{command}}",
+        "description": "Body of the confirmation dialog before the AI runs a CLI write command; {{command}} is the exact CLI line"
     },
     "aiDiagnoseDataSource": {
         "message": "AI received:",

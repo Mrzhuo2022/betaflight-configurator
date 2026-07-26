@@ -334,6 +334,9 @@ td [role="group"] {
     flex-grow: 0;
     flex-shrink: 0;
     min-width: 0;
+    /* Never let a previously-dragged wide rail starve #content on smaller windows:
+       inline width comes from the store, but max-width wins, keeping the tab area usable. */
+    max-width: 55vw;
     min-height: 0;
     overflow: hidden;
     transition:

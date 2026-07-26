@@ -9826,6 +9826,24 @@
     "aiBlackboxNoDataDetail": {
         "message": "此日志中没有可用的陀螺仪数据。"
     },
+    "aiExampleDiagnose": {
+        "message": "帮我诊断一下调参"
+    },
+    "aiExampleFilters": {
+        "message": "解释一下我的滤波设置"
+    },
+    "aiExamplePIDs": {
+        "message": "怎么减少螺旋桨洗涤效应？"
+    },
+    "aiCopyMessage": {
+        "message": "复制消息"
+    },
+    "aiRetry": {
+        "message": "重试"
+    },
+    "aiExport": {
+        "message": "导出对话"
+    },
     "aiRoleUser": {
         "message": "你"
     },
@@ -9850,17 +9868,11 @@
     "aiSettingsTitle": {
         "message": "AI 助手"
     },
-    "aiSettingsHelp": {
-        "message": "AI 助手使用你自己的 OpenAI 兼容 API Key。请求直接从此应用发送到你选择的提供商；密钥仅存储在本设备上。"
-    },
     "aiSettingsEnabled": {
         "message": "启用 AI 助手"
     },
     "aiSettingsBaseUrl": {
         "message": "API 基础地址"
-    },
-    "aiSettingsBaseUrlHelp": {
-        "message": "OpenAI 兼容的端点，例如 https://api.openai.com/v1。本地 Ollama：http://localhost:11434/v1。"
     },
     "aiSettingsBaseUrlPlaceholder": {
         "message": "https://api.openai.com/v1"
@@ -9868,17 +9880,11 @@
     "aiSettingsApiKey": {
         "message": "API 密钥"
     },
-    "aiSettingsApiKeyHelp": {
-        "message": "仅存储在此浏览器/设备中。仅作为 Bearer 令牌发送到上述基础地址。"
-    },
     "aiSettingsApiKeyPlaceholder": {
         "message": "sk-..."
     },
     "aiSettingsModel": {
         "message": "模型"
-    },
-    "aiSettingsModelHelp": {
-        "message": "提供商接受的模型 ID，例如 gpt-4o、gpt-4o-mini。"
     },
     "aiSettingsModelPlaceholder": {
         "message": "gpt-4o"
@@ -9886,14 +9892,8 @@
     "aiSettingsTemperature": {
         "message": "温度"
     },
-    "aiSettingsTemperatureHelp": {
-        "message": "采样创造性，0（精确）到 2（多样）。调参建议通常适合较低的值。"
-    },
     "aiSettingsReasoningEffort": {
         "message": "思考强度"
-    },
-    "aiSettingsReasoningEffortHelp": {
-        "message": "模型回答前投入多少思考。关闭可提速；较高等级让推理模型（DeepSeek、GPT-5/o 系列、Claude、Qwen3）在困难的调参决策上思考更久。按厂商自动路由。"
     },
     "aiReasoningOff": {
         "message": "关闭"
@@ -10047,6 +10047,15 @@
     },
     "aiDiagnoseParamChanges": {
         "message": "建议的参数更改"
+    },
+    "aiDiagnoseSelectParam": {
+        "message": "应用时包含此项更改"
+    },
+    "aiCliWriteConfirmTitle": {
+        "message": "AI 请求修改飞控设置"
+    },
+    "aiCliWriteConfirmBody": {
+        "message": "允许 AI 助手执行此 CLI 命令吗？\n\n{{command}}"
     },
     "aiDiagnoseDataSource": {
         "message": "AI 收到的数据："

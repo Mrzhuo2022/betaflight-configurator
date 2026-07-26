@@ -1,10 +1,12 @@
 <template>
     <div class="flex flex-col flex-1 min-h-0 gap-2 p-3">
-        <div
+        <button
             v-if="!isConfigured || !isEnabled"
-            class="text-xs text-warning bg-warning/10 px-2 py-1 rounded"
+            type="button"
+            class="text-xs text-warning bg-warning/10 px-2 py-1 rounded text-left w-full hover:bg-warning/15 transition-colors"
             v-html="sanitizedSetupHint"
-        ></div>
+            @click="openOptions"
+        ></button>
         <div v-else-if="!isConnected" class="text-xs text-dimmed bg-default/30 px-2 py-1 rounded">
             {{ $t("aiDisconnectedHint") }}
         </div>
@@ -119,7 +121,20 @@
                 @scroll.passive="onLogScroll"
             >
                 <p v-if="!isHistoryLoaded" class="text-sm text-dimmed">{{ $t("aiHistoryLoading") }}</p>
-                <p v-else-if="!messages.length" class="text-sm text-dimmed">{{ $t("aiEmptyConversation") }}</p>
+                <div v-else-if="!messages.length" class="flex flex-col gap-2 py-4">
+                    <p class="text-sm text-dimmed">{{ $t("aiEmptyConversation") }}</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <UButton
+                            v-for="prompt in examplePrompts"
+                            :key="prompt"
+                            :label="prompt"
+                            size="xs"
+                            variant="soft"
+                            color="neutral"
+                            @click="sendExamplePrompt(prompt)"
+                        />
+                    </div>
+                </div>
                 <template v-for="(m, i) in messages" :key="m.ts ?? i">
                     <!-- Chain-of-thought sits ABOVE the answer for every assistant turn that has one. -->
                     <div
@@ -146,7 +161,7 @@
                         v-if="m.suggestion && m.suggestion.kind === 'diagnosis'"
                         class="self-start w-full rounded-lg p-2 bg-default/40 shrink-0"
                     >
-                        <DiagnosisCard :suggestion="m.suggestion" />
+                        <DiagnosisCard :suggestion="m.suggestion" @applied="recordAppliedChanges" />
                     </div>
                     <div
                         v-else
@@ -156,7 +171,39 @@
                         <span class="font-semibold text-xs uppercase text-dimmed">
                             {{ m.role === "user" ? $t("aiRoleUser") : $t("aiRoleAssistant") }}
                         </span>
-                        <div class="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{{ m.content }}</div>
+                        <!-- User messages: plain text. Assistant messages: rendered Markdown. -->
+                        <div v-if="m.role === 'user'" class="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                            {{ m.content }}
+                        </div>
+                        <div v-else class="relative group">
+                            <div
+                                class="ai-markdown break-words [overflow-wrap:anywhere]"
+                                v-html="renderMarkdown(m.content)"
+                            ></div>
+                            <div
+                                class="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5"
+                            >
+                                <UButton
+                                    icon="i-lucide-copy"
+                                    size="xs"
+                                    variant="ghost"
+                                    color="neutral"
+                                    square
+                                    :aria-label="$t('aiCopyMessage')"
+                                    @click="copyMessage(m.content)"
+                                />
+                                <UButton
+                                    v-if="m.isError && i === messages.length - 1"
+                                    icon="i-lucide-refresh-cw"
+                                    size="xs"
+                                    variant="ghost"
+                                    color="neutral"
+                                    square
+                                    :aria-label="$t('aiRetry')"
+                                    @click="retryLastAction"
+                                />
+                            </div>
+                        </div>
                     </div>
                 </template>
                 <!-- Live reasoning while streaming — always above the live answer bubble. -->
@@ -188,12 +235,23 @@
                         {{ streamingReasoning }}
                     </div>
                 </div>
+                <!-- Tool call progress indicator during CLI-assisted chat -->
+                <div
+                    v-if="isBusy && toolCallStatus && !streamingContent"
+                    class="self-start text-xs text-dimmed bg-default/20 rounded px-2 py-1 shrink-0 flex items-center gap-1.5"
+                >
+                    <span class="i-lucide-terminal animate-pulse"></span>
+                    <span>{{ toolCallStatus }}…</span>
+                </div>
                 <div
                     v-if="isBusy && streamingContent"
                     class="text-sm rounded-lg p-2 max-w-[85%] self-start bg-default/40 shrink-0"
                 >
                     <span class="font-semibold text-xs uppercase text-dimmed">{{ $t("aiRoleAssistant") }}</span>
-                    <div class="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{{ streamingContent }}</div>
+                    <div
+                        class="ai-markdown break-words [overflow-wrap:anywhere]"
+                        v-html="renderMarkdown(streamingContent)"
+                    ></div>
                 </div>
             </div>
 
@@ -311,6 +369,16 @@
                     size="sm"
                     @click="resetConversation"
                 />
+                <UButton
+                    v-if="messages.length"
+                    icon="i-lucide-download"
+                    variant="ghost"
+                    color="neutral"
+                    square
+                    size="sm"
+                    :aria-label="$t('aiExport')"
+                    @click="exportConversation"
+                />
             </div>
         </div>
     </div>
@@ -319,6 +387,8 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted } from "vue";
 import { useTranslation } from "i18next-vue";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import DiagnosisCard from "./DiagnosisCard.vue";
 import { useAiAssistant } from "@/composables/ai/useAiAssistant";
 import { useBlackboxDigest } from "@/composables/ai/digestBlackbox";
@@ -328,6 +398,20 @@ import { useLogStore } from "@/blackbox-viewer/stores/log";
 import bvPinia from "@/blackbox-viewer/pinia_instance";
 import { gui_log } from "@/js/gui_log";
 import FC from "@/js/fc";
+import { useNavigationStore } from "@/stores/navigation";
+
+// Configure marked for safe, minimal output.
+marked.setOptions({ breaks: true, gfm: true });
+
+/**
+ * Render Markdown text to sanitized HTML. Used for assistant messages only —
+ * user messages remain plain text. DOMPurify strips any script/event injection.
+ */
+function renderMarkdown(text) {
+    if (!text) return "";
+    const raw = marked.parse(text);
+    return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+}
 
 const { t } = useTranslation();
 
@@ -338,6 +422,7 @@ const {
     isStreaming,
     streamingContent,
     streamingReasoning,
+    toolCallStatus,
     isConnected,
     isConfigured,
     isEnabled,
@@ -356,6 +441,8 @@ const {
     syncSettings,
     setBlackboxDigest,
     clearBlackboxDigest,
+    recordAppliedChanges,
+    popFailedExchange,
 } = useAiAssistant();
 const { isProcessing: isDigesting, error: digestError, digest, digestBlackboxData } = useBlackboxDigest();
 const { pulling: isPulling, progress: pullProgress, available: dataflashAvailable, pull } = useDataflashPull();
@@ -520,8 +607,66 @@ async function send() {
         await scrollToBottom();
         await scrollFcTerminalTop();
     } catch (e) {
-        if (e.name !== "AbortError") dialog.openInfo("Error", e.message || String(e));
+        if (e.name !== "AbortError") dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
+}
+
+// Example prompts for the empty state — reduce blank-page friction for first-time users.
+const examplePrompts = computed(() => [t("aiExampleDiagnose"), t("aiExampleFilters"), t("aiExamplePIDs")]);
+function sendExamplePrompt(prompt) {
+    input.value = prompt;
+    send();
+}
+
+// Open Options dialog (used by the "not configured" warning button).
+const navStore = useNavigationStore();
+function openOptions() {
+    navStore.optionsDialogOpen = true;
+}
+
+// Retry the last failed exchange: remove the error message + its user question from the
+// conversation, then re-send the question — so the history doesn't accumulate
+// "question → error → same question → answer" noise.
+async function retryLastAction() {
+    if (isBusy.value) return;
+    const failedText = popFailedExchange();
+    if (!failedText) return;
+    input.value = failedText;
+    await send();
+}
+
+// Copy an assistant message to clipboard.
+async function copyMessage(content) {
+    try {
+        await navigator.clipboard.writeText(content);
+        gui_log("AI: message copied to clipboard");
+    } catch {
+        gui_log("AI: failed to copy message");
+    }
+}
+
+// Export conversation as a Markdown file for sharing / support tickets.
+function exportConversation() {
+    const lines = ["# Betaflight AI Assistant Conversation", `Exported: ${new Date().toISOString()}`, ""];
+    for (const m of messages.value) {
+        const role = m.role === "user" ? "👤 User" : "🤖 Assistant";
+        lines.push(`## ${role}`);
+        lines.push(m.content || "");
+        if (m.suggestion?.kind === "diagnosis") {
+            lines.push("\n```json");
+            lines.push(JSON.stringify(m.suggestion, null, 2));
+            lines.push("```");
+        }
+        lines.push("");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `betaflight-ai-${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    gui_log("AI: conversation exported");
 }
 
 function onUploadBblClick() {
@@ -644,5 +789,64 @@ watch(streamingContent, () => {
     max-height: 11rem;
     min-height: 4.5rem;
     scrollbar-width: thin;
+}
+/* Markdown rendered content (via v-html) needs :deep() to pierce scoped styles */
+.ai-markdown :deep(p) {
+    margin: 0 0 0.4em;
+}
+.ai-markdown :deep(p:last-child) {
+    margin-bottom: 0;
+}
+.ai-markdown :deep(ul),
+.ai-markdown :deep(ol) {
+    padding-left: 1.25em;
+    margin: 0.25em 0;
+}
+.ai-markdown :deep(li) {
+    margin: 0.15em 0;
+}
+.ai-markdown :deep(code) {
+    background: var(--surface-200);
+    padding: 0.1em 0.3em;
+    border-radius: 0.25rem;
+    font-size: 0.9em;
+}
+.ai-markdown :deep(pre) {
+    background: var(--surface-200);
+    padding: 0.5em 0.75em;
+    border-radius: 0.375rem;
+    overflow-x: auto;
+    margin: 0.4em 0;
+}
+.ai-markdown :deep(pre code) {
+    background: none;
+    padding: 0;
+}
+.ai-markdown :deep(h1),
+.ai-markdown :deep(h2),
+.ai-markdown :deep(h3) {
+    font-weight: 600;
+    margin: 0.5em 0 0.25em;
+    font-size: 1em;
+}
+.ai-markdown :deep(table) {
+    border-collapse: collapse;
+    margin: 0.4em 0;
+    font-size: 0.85em;
+}
+.ai-markdown :deep(th),
+.ai-markdown :deep(td) {
+    border: 1px solid var(--surface-300);
+    padding: 0.2em 0.5em;
+}
+.ai-markdown :deep(th) {
+    font-weight: 600;
+    background: var(--surface-100);
+}
+.ai-markdown :deep(blockquote) {
+    border-left: 3px solid var(--primary-500);
+    padding-left: 0.75em;
+    margin: 0.4em 0;
+    color: var(--ui-text-dimmed);
 }
 </style>

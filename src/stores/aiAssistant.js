@@ -50,6 +50,12 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
     // Live chain-of-thought tokens from R1-style models (DeepSeek/Qwen/Grok). Parallel to
     // streamingContent so the UI can render a separate collapsible "thinking" panel.
     const streamingReasoning = ref("");
+    // Transient status line for CLI tool-call progress (e.g. "Executing cli_diff…").
+    const toolCallStatus = ref("");
+    // Parameter changes applied via DiagnosisCard in this session (transient, not persisted).
+    // Fed back into the next chat/diagnose context so the AI can reason about before/after.
+    /** @type {import('vue').Ref<Array<{ts: number, changes: Array<{path: string, current: *, suggested: *}>}>>} */
+    const appliedChangeLog = ref([]);
 
     // --- last FC snapshot for the terminal panel (transient, not persisted) ---
     /** @type {import('vue').Ref<string>} plain-text summary shown in the AI terminal */
@@ -181,9 +187,27 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
     }
 
     // --- actions: conversation ---
-    function addMessage(role, content, suggestion = null, reasoning = "") {
-        messages.value.push({ role, content, suggestion, reasoning: reasoning || "", ts: Date.now() });
+    function addMessage(role, content, suggestion = null, reasoning = "", isError = false) {
+        messages.value.push({ role, content, suggestion, reasoning: reasoning || "", isError, ts: Date.now() });
         scheduleSave();
+    }
+    /**
+     * Remove the trailing failed exchange (last assistant error message and the user
+     * message right before it) so a retry doesn't leave a duplicate question + error
+     * pair in the conversation. No-op unless the last message is an error.
+     * @returns {string} the removed user message content, or "" if nothing was removed
+     */
+    function popFailedExchange() {
+        const msgs = messages.value;
+        const last = msgs[msgs.length - 1];
+        if (!last || last.role !== "assistant" || !last.isError) return "";
+        msgs.pop();
+        let userText = "";
+        if (msgs.length && msgs[msgs.length - 1].role === "user") {
+            userText = msgs.pop().content;
+        }
+        scheduleSave();
+        return userText;
     }
     function clearMessages() {
         historyClearedDuringLoad = true;
@@ -205,6 +229,22 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
     function clearStreamingContent() {
         streamingContent.value = "";
         streamingReasoning.value = "";
+        toolCallStatus.value = "";
+    }
+    function setToolCallStatus(text) {
+        toolCallStatus.value = text || "";
+    }
+    /** Record a batch of applied param changes for before/after follow-up context. */
+    function recordAppliedChanges(changes) {
+        if (!Array.isArray(changes) || !changes.length) return;
+        appliedChangeLog.value.push({
+            ts: Date.now(),
+            changes: changes.map(({ path, current, suggested }) => ({ path, current, suggested })),
+        });
+        // Keep only the last few batches — old tuning steps stop being relevant context.
+        if (appliedChangeLog.value.length > 5) {
+            appliedChangeLog.value = appliedChangeLog.value.slice(-5);
+        }
     }
     function setStreamingReasoning(text) {
         streamingReasoning.value = text || "";
@@ -272,6 +312,8 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
         lastError,
         streamingContent,
         streamingReasoning,
+        toolCallStatus,
+        appliedChangeLog,
         // FC snapshot terminal
         lastFcSummary,
         fcFetchStatus,
@@ -295,11 +337,14 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
         syncFromStorage,
         // conversation actions
         addMessage,
+        popFailedExchange,
         clearMessages,
         setBusy,
         setStreamingContent,
         setStreamingReasoning,
         clearStreamingContent,
+        setToolCallStatus,
+        recordAppliedChanges,
         setError,
         // FC snapshot actions
         setFcFetchStatus,
