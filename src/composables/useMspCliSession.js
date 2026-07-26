@@ -6,7 +6,7 @@ import { cancelRebootReconnect, scheduleRebootReconnect } from "../js/serial_bac
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 2000;
 const SAVE_COMMAND_TIMEOUT_MS = 5000;
-const DUMP_READ_TIMEOUT_MS = 10000;
+const DUMP_READ_TIMEOUT_MS = 30000;
 const LINE_DELAY_MS = 15;
 const PROFILE_COMMAND_DELAY_MS = 100;
 const ERROR_PREFIX = "###ERROR";

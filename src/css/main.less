@@ -324,6 +324,55 @@ td [role="group"] {
     background-color: var(--surface-100);
     width: 100%;
 }
+
+/* Embedded AI assistant right rail. Third flex child of #tab-content-container.
+   #content (flex:1 1 0) yields the space; min-width:0 is mandatory or the conversation
+   content blows the flex layout (same trap as #content).
+   Width is set inline from the store (user-resizable); flex-basis follows it. We keep
+   flex-grow/shrink at 0 so the user's chosen width is honoured exactly. */
+#ai-assistant-rail {
+    flex-grow: 0;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    transition:
+        width 0.2s,
+        flex-basis 0.2s;
+    background-color: var(--surface-100);
+    border-left: 1px solid var(--surface-200);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+/* Drag handle on the rail's left edge. Invisible until hover/drag so it doesn't clutter
+   the UI, but wide enough (hit area) to grab easily. */
+.ai-rail-resizer {
+    position: absolute;
+    top: 0;
+    left: -2px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    background-color: transparent;
+    transition: background-color 0.15s;
+}
+.ai-rail-resizer:hover,
+.ai-rail-resizer:active {
+    background-color: var(--primary-500, #3b82f6);
+    opacity: 0.5;
+}
+/* While dragging: lock the whole document so text doesn't get selected mid-gesture and the
+   cursor stays col-resize even when the pointer leaves the handle. */
+body.ai-rail-resizing {
+    cursor: col-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+body.ai-rail-resizing #ai-assistant-rail {
+    transition: none; // snap during drag, animate on release
+}
 .tab_container.logopen {
     overflow-x: hidden;
     overflow-y: auto;

@@ -9789,5 +9789,308 @@
     },
     "preflightNotamLastFetched": {
         "message": "上次获取时间"
+    },
+    "aiConversationTitle": {
+        "message": "对话"
+    },
+    "aiEmptyConversation": {
+        "message": "询问当前的调参设置、描述飞行手感问题，或请求推荐的起飞参数。"
+    },
+    "aiHistoryLoading": {
+        "message": "正在加载完整对话历史…"
+    },
+    "aiInputPlaceholder": {
+        "message": "描述你想要改进的地方..."
+    },
+    "aiSend": {
+        "message": "发送"
+    },
+    "aiClear": {
+        "message": "清空"
+    },
+    "aiRoleUser": {
+        "message": "你"
+    },
+    "aiRoleAssistant": {
+        "message": "助手"
+    },
+    "aiSetupHint": {
+        "message": "AI 助手尚未就绪。请在<b>选项 → AI</b> 中启用并设置 API Key。"
+    },
+    "aiDisconnectedHint": {
+        "message": "未连接飞控。你仍可以询问通用调参问题，但无法获取实时调参数据。"
+    },
+    "aiRequestFailed": {
+        "message": "AI 请求失败"
+    },
+    "aiErrorDisabled": {
+        "message": "AI 助手已禁用。请在选项页面中启用。"
+    },
+    "aiErrorNotConfigured": {
+        "message": "AI 服务未配置。请在选项中设置 API Key 和基础 URL。"
+    },
+    "aiSettingsTitle": {
+        "message": "AI 助手"
+    },
+    "aiSettingsHelp": {
+        "message": "AI 助手使用你自己的 OpenAI 兼容 API Key。请求直接从此应用发送到你选择的提供商；密钥仅存储在本设备上。"
+    },
+    "aiSettingsEnabled": {
+        "message": "启用 AI 助手"
+    },
+    "aiSettingsBaseUrl": {
+        "message": "API 基础地址"
+    },
+    "aiSettingsBaseUrlHelp": {
+        "message": "OpenAI 兼容的端点，例如 https://api.openai.com/v1。本地 Ollama：http://localhost:11434/v1。"
+    },
+    "aiSettingsBaseUrlPlaceholder": {
+        "message": "https://api.openai.com/v1"
+    },
+    "aiSettingsApiKey": {
+        "message": "API 密钥"
+    },
+    "aiSettingsApiKeyHelp": {
+        "message": "仅存储在此浏览器/设备中。仅作为 Bearer 令牌发送到上述基础地址。"
+    },
+    "aiSettingsApiKeyPlaceholder": {
+        "message": "sk-..."
+    },
+    "aiSettingsModel": {
+        "message": "模型"
+    },
+    "aiSettingsModelHelp": {
+        "message": "提供商接受的模型 ID，例如 gpt-4o、gpt-4o-mini。"
+    },
+    "aiSettingsModelPlaceholder": {
+        "message": "gpt-4o"
+    },
+    "aiSettingsTemperature": {
+        "message": "温度"
+    },
+    "aiSettingsTemperatureHelp": {
+        "message": "采样创造性，0（精确）到 2（多样）。调参建议通常适合较低的值。"
+    },
+    "aiSettingsReasoningEffort": {
+        "message": "思考强度"
+    },
+    "aiSettingsReasoningEffortHelp": {
+        "message": "模型回答前投入多少思考。关闭可提速；较高等级让推理模型（DeepSeek、GPT-5/o 系列、Claude、Qwen3）在困难的调参决策上思考更久。按厂商自动路由。"
+    },
+    "aiReasoningOff": {
+        "message": "关闭"
+    },
+    "aiReasoningLow": {
+        "message": "低"
+    },
+    "aiReasoningMedium": {
+        "message": "中"
+    },
+    "aiReasoningHigh": {
+        "message": "高"
+    },
+    "aiThinkingProcess": {
+        "message": "思考过程"
+    },
+    "aiThinkingInProgress": {
+        "message": "思考中…"
+    },
+    "aiThinkingEffort": {
+        "message": "思考强度"
+    },
+    "aiBlackboxTerminalTitle": {
+        "message": "黑匣子分析"
+    },
+    "aiBlackboxEmpty": {
+        "message": "未加载黑匣子数据。"
+    },
+    "aiBlackboxExpand": {
+        "message": "展开黑匣子分析"
+    },
+    "aiBlackboxCollapse": {
+        "message": "收起黑匣子分析"
+    },
+    "aiBlackboxClear": {
+        "message": "清除黑匣子数据"
+    },
+    "aiRailResize": {
+        "message": "拖动调整助手面板宽度，双击恢复默认"
+    },
+    "aiBlackboxStatusChirp": {
+        "message": "chirp"
+    },
+    "aiBlackboxStatusRegular": {
+        "message": "飞行日志"
+    },
+    "aiCancelled": {
+        "message": "已取消。"
+    },
+    "aiShowApiKey": {
+        "message": "显示 API 密钥"
+    },
+    "aiHideApiKey": {
+        "message": "隐藏 API 密钥"
+    },
+    "aiFetchModels": {
+        "message": "获取"
+    },
+    "aiSettingsModelSearchPlaceholder": {
+        "message": "输入模型 ID 或选择一个..."
+    },
+    "aiModelsFetched": {
+        "message": "{{1}} 个可用模型。"
+    },
+    "aiFetchModelsFailed": {
+        "message": "获取模型列表失败"
+    },
+    "aiDiagnose": {
+        "message": "诊断"
+    },
+    "aiDiagnoseTrigger": {
+        "message": "对当前调参执行一键诊断。"
+    },
+    "aiDiagnoseRiskLabel": {
+        "message": "风险"
+    },
+    "aiDiagnoseRecommendation": {
+        "message": "建议"
+    },
+    "aiDiagnoseParam": {
+        "message": "参数"
+    },
+    "aiDiagnoseCurrent": {
+        "message": "当前值"
+    },
+    "aiDiagnoseSuggested": {
+        "message": "建议值"
+    },
+    "aiDiagnoseNoFindings": {
+        "message": "未发现异常。当前调参看起来安全且平衡。"
+    },
+    "aiBlackboxUpload": {
+        "message": "黑匣子"
+    },
+    "aiBlackboxLoaded": {
+        "message": "黑匣子已加载"
+    },
+    "aiBlackboxNoChirp": {
+        "message": "此日志中未找到 chirp/自动调参数据。请确保录制了已启用自动调参的飞行日志。"
+    },
+    "aiApplySuccess": {
+        "message": "已成功应用参数更改。"
+    },
+    "aiApplySuccessReboot": {
+        "message": "参数更改已应用并保存。建议重启飞控以确保所有设置生效。"
+    },
+    "aiApplyNotSupportedVersion": {
+        "message": "固件版本过旧（需要 4.5.4+）。"
+    },
+    "aiApplyBackupFailed": {
+        "message": "备份失败： {{message}}"
+    },
+    "aiApplySkipBackup": {
+        "message": "固件版本过旧，无法进行 CLI 备份，已跳过备份步骤。"
+    },
+    "aiApplyWriteFailed": {
+        "message": "写入失败： {{message}}"
+    },
+    "aiBlackboxNoChirpDetail": {
+        "message": "数据闪存中不包含 chirp/自动调参飞行数据。请先启用自动调参录制一次飞行。"
+    },
+    "aiBlackboxReadFC": {
+        "message": "从飞控读取"
+    },
+    "aiBlackboxReadViewer": {
+        "message": "从查看器读取"
+    },
+    "aiStop": {
+        "message": "停止"
+    },
+    "aiDiagnoseApplyAll": {
+        "message": "应用全部修改"
+    },
+    "aiDiagnoseApplied": {
+        "message": "已应用"
+    },
+    "aiDiagnoseNoBackup": {
+        "message": "无备份，无法撤销"
+    },
+    "aiDiagnoseRevert": {
+        "message": "撤销"
+    },
+    "aiDiagnoseApplyConfirmTitle": {
+        "message": "应用 AI 建议？"
+    },
+    "aiDiagnoseApplyConfirmBody": {
+        "message": "这将把建议的参数修改写入飞控。当前配置将先备份，之后可以撤销修改。"
+    },
+    "aiApplySuccess": {
+        "message": "AI 修改已保存到飞控。"
+    },
+    "aiDiagnoseDataSource": {
+        "message": "AI 收到的数据："
+    },
+    "aiDiagnoseSourceFC": {
+        "message": "飞控调参"
+    },
+    "aiDiagnoseSourceNoFC": {
+        "message": "未连接飞控"
+    },
+    "aiDiagnoseSourceBBL": {
+        "message": "黑匣子"
+    },
+    "aiRevertSuccess": {
+        "message": "配置已恢复。"
+    },
+    "aiFcTerminalTitle": {
+        "message": "飞控数据"
+    },
+    "aiFcRefresh": {
+        "message": "刷新"
+    },
+    "aiFcExpand": {
+        "message": "展开飞控数据"
+    },
+    "aiFcCollapse": {
+        "message": "收起飞控数据"
+    },
+    "aiFcLoading": {
+        "message": "正在通过 MSP 读取飞控调参..."
+    },
+    "aiFcDisconnected": {
+        "message": "飞控未连接。请先连接，再点击刷新。"
+    },
+    "aiFcError": {
+        "message": "读取飞控数据失败"
+    },
+    "aiFcUnknownError": {
+        "message": "未知错误"
+    },
+    "aiFcEmpty": {
+        "message": "飞控快照看起来是空的。MSP 可能失败，或返回了全 0。"
+    },
+    "aiFcDetail": {
+        "message": "详情"
+    },
+    "aiFcIdle": {
+        "message": "还没有飞控快照。连接飞控后点刷新，或发送消息 / 运行诊断。"
+    },
+    "aiFcStatusReady": {
+        "message": "已就绪"
+    },
+    "aiFcStatusLoading": {
+        "message": "读取中"
+    },
+    "aiFcStatusEmpty": {
+        "message": "空数据"
+    },
+    "aiFcStatusError": {
+        "message": "错误"
+    },
+    "aiFcStatusDisconnected": {
+        "message": "未连接"
+    },
+    "aiFcStatusIdle": {
+        "message": "空闲"
     }
 }

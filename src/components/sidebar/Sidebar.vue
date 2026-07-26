@@ -44,6 +44,17 @@
                 size="xs"
             />
         </UTooltip>
+        <UTooltip :text="$t('sidebarOpenAi')" :delay-duration="300">
+            <UButton
+                icon="i-lucide-sparkles"
+                :variant="navigationStore.aiAssistantPanelOpen ? 'soft' : 'ghost'"
+                :color="navigationStore.aiAssistantPanelOpen ? 'primary' : 'neutral'"
+                square
+                :aria-label="$t('sidebarOpenAi')"
+                @click="navigationStore.setAiAssistantPanelOpen(!navigationStore.aiAssistantPanelOpen)"
+                size="xs"
+            />
+        </UTooltip>
         <UTooltip :text="$t('logActionShow')" :delay-duration="300">
             <UButton
                 :icon="sidebarItems.find((item) => item.key === 'log').icon"

@@ -1053,7 +1053,7 @@ function handleIFrame(state, ctx) {
     const timeIdx = ctx.fi["time"] ?? ctx.fi["time(us)"] ?? 1;
     state.lastMainFrameTime = state.previous[timeIdx];
 
-    collectIfActive(state, ctx);
+    (ctx.onFrame || collectIfActive)(state, ctx);
     state.frameCount++;
 }
 
@@ -1088,7 +1088,7 @@ function handlePFrame(state, ctx) {
     const timeIdx = ctx.fi["time"] ?? ctx.fi["time(us)"] ?? 1;
     state.lastMainFrameTime = state.previous[timeIdx];
 
-    collectIfActive(state, ctx);
+    (ctx.onFrame || collectIfActive)(state, ctx);
     state.frameCount++;
 }
 
@@ -1214,4 +1214,111 @@ function closeSegment(segments, endIdx, axis) {
             last.endIdx = endIdx;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regular (non-chirp) log parsing — extracts gyro + motor for PSD analysis
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a regular (non-chirp) BBL log. Extracts gyroADC[0..2] and motor[0..7]
+ * from every I/P frame, ignoring chirp mode state. Suitable for computing
+ * power spectral density to identify noise and vibration frequencies.
+ *
+ * @param {Uint8Array} data  The full BBL file bytes.
+ * @param {number} logStart  Byte offset from findLogBoundaries.
+ * @param {number} logEnd    Byte offset from findLogBoundaries.
+ * @param {string} [apiVersion]
+ * @returns {{ sysConfig: object, flightData: object }}
+ */
+export function parseRegularLog(data, logStart, logEnd, _apiVersion) {
+    const { sysConfig, frameDefs, dataStart } = parseHeader(data, logStart, logEnd);
+    const fi = sysConfig.fieldIndices;
+
+    const resolveIdx = (axis, patterns) => {
+        for (const p of patterns) {
+            if (p in fi && fi[p] >= 0) return fi[p];
+        }
+        return -1;
+    };
+
+    const gyroIdx = [
+        resolveIdx(0, [`gyroADC[0]`, `gyroADC0`, `gyro[0]`, `gyro0`]),
+        resolveIdx(1, [`gyroADC[1]`, `gyroADC1`, `gyro[1]`, `gyro1`]),
+        resolveIdx(2, [`gyroADC[2]`, `gyroADC2`, `gyro[2]`, `gyro2`]),
+    ];
+    const motorIdx = [0, 1, 2, 3].map((n) => resolveIdx(n, [`motor[${n}]`, `motor${n}`]));
+    const motor0Idx = motorIdx[0];
+
+    if (gyroIdx.every((i) => i < 0)) {
+        const names = Object.keys(fi)
+            .filter((k) => fi[k] >= 0)
+            .slice(0, 30)
+            .join(", ");
+        throw new Error(`No gyro field found. Available: ${names}`);
+    }
+
+    const fieldCount = frameDefs.I.count;
+    const hiResScale = sysConfig.blackbox_high_resolution ? 0.1 : 1;
+    const rawGyro = [[], [], []];
+    const rawMotor = [[], [], [], []];
+
+    const state = {
+        current: new Int32Array(fieldCount),
+        previous: null,
+        previous2: null,
+        lastIFrame: null,
+        sFrameCurrent: new Int32Array(frameDefs.S.count),
+        chirpActive: false,
+        lastMainFrameTime: 0,
+        currentAxis: -1,
+        frameCount: 0,
+        corruptFrameCount: 0,
+    };
+
+    const ctx = {
+        stream: new ArrayDataStream(data, dataStart, logEnd),
+        frameDefs,
+        sysConfig,
+        fi,
+        fieldCount,
+        motor0Index: motor0Idx,
+        sFrameFlightModeFlagsIdx: -1,
+        hiResScale,
+        // onFrame callback replaces the default collectIfActive
+        onFrame: (_s) => {
+            const f = state.previous;
+            for (let a = 0; a < 3; a++) {
+                const i = gyroIdx[a];
+                if (i >= 0 && i < f.length) rawGyro[a].push(f[i] * hiResScale);
+            }
+            for (let m = 0; m < 4; m++) {
+                const i = motorIdx[m];
+                if (i >= 0 && i < f.length) rawMotor[m].push(f[i]);
+            }
+        },
+    };
+
+    const maxCorrupt = 500;
+    while (!ctx.stream.eof && state.corruptFrameCount < maxCorrupt) {
+        const frameType = ctx.stream.readByte();
+        if (frameType === -1) break;
+        dispatchFrame(frameType, state, ctx);
+    }
+
+    return {
+        sysConfig,
+        flightData: {
+            gyro: [new Float32Array(rawGyro[0]), new Float32Array(rawGyro[1]), new Float32Array(rawGyro[2])],
+            motor: [
+                new Float32Array(rawMotor[0]),
+                new Float32Array(rawMotor[1]),
+                new Float32Array(rawMotor[2]),
+                new Float32Array(rawMotor[3]),
+            ],
+            sampleCount: rawGyro[0].length,
+            totalFrames: state.frameCount,
+            corruptFrames: state.corruptFrameCount,
+        },
+    };
 }

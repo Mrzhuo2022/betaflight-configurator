@@ -56,6 +56,15 @@ export default {
                 content: "bg-default divide-y divide-default flex flex-col focus:outline-none z-3001",
             },
         },
+        slideover: {
+            slots: {
+                // Same z-index rationale as modal above. Without this override the slideover
+                // renders below the ConnectButton dropdown (z-2100) and tooltips (z-[2500])
+                // because #main-wrapper's transform:scale() creates a stacking context.
+                overlay: "fixed inset-0 z-3000",
+                content: "bg-default divide-y divide-default flex flex-col focus:outline-none z-3001",
+            },
+        },
         switch: {
             slots: {
                 base: "cursor-pointer",

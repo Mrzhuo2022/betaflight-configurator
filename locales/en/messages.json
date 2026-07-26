@@ -10144,5 +10144,354 @@
     },
     "preflightNotamLastFetched": {
         "message": "Last fetched"
+    },
+    "tabAiAssistant": {
+        "message": "AI Assistant",
+        "description": "Sidebar / tab title for the AI tuning assistant"
+    },
+    "aiConversationTitle": {
+        "message": "Conversation",
+        "description": "Heading for the AI chat panel"
+    },
+    "aiEmptyConversation": {
+        "message": "Ask about your current tune, describe a handling issue, or request a starting point for your craft.",
+        "description": "Placeholder shown when there are no messages yet"
+    },
+    "aiHistoryLoading": {
+        "message": "Loading complete conversation history…"
+    },
+    "aiInputPlaceholder": {
+        "message": "Describe what you want to improve..."
+    },
+    "aiSend": {
+        "message": "Send"
+    },
+    "aiClear": {
+        "message": "Clear"
+    },
+    "aiRoleUser": {
+        "message": "You"
+    },
+    "aiRoleAssistant": {
+        "message": "Assistant"
+    },
+    "aiSetupHint": {
+        "message": "AI assistant is not ready. Enable it and set your API key in <b>Options &rarr; AI</b>.",
+        "description": "Shown when AI is disabled or not configured. HTML allowed."
+    },
+    "aiDisconnectedHint": {
+        "message": "No flight controller connected. You can still ask general tuning questions, but live tune data is unavailable.",
+        "description": "Shown when AI is ready but no FC is connected"
+    },
+    "aiRequestFailed": {
+        "message": "AI request failed"
+    },
+    "aiErrorDisabled": {
+        "message": "AI assistant is disabled. Enable it in Options."
+    },
+    "aiErrorNotConfigured": {
+        "message": "AI service is not configured. Set an API key and base URL in Options."
+    },
+    "aiSettingsTitle": {
+        "message": "AI Assistant"
+    },
+    "aiSettingsHelp": {
+        "message": "The AI assistant uses your own OpenAI-compatible API key. Requests go directly from this app to the provider you choose; your key is stored only on this device."
+    },
+    "aiSettingsEnabled": {
+        "message": "Enable AI assistant"
+    },
+    "aiSettingsBaseUrl": {
+        "message": "API base URL"
+    },
+    "aiSettingsBaseUrlHelp": {
+        "message": "OpenAI-compatible endpoint, e.g. https://api.openai.com/v1. Local Ollama: http://localhost:11434/v1."
+    },
+    "aiSettingsBaseUrlPlaceholder": {
+        "message": "https://api.openai.com/v1"
+    },
+    "aiSettingsApiKey": {
+        "message": "API key"
+    },
+    "aiSettingsApiKeyHelp": {
+        "message": "Stored only in this browser/device. Sent exclusively as a Bearer token to the base URL above."
+    },
+    "aiSettingsApiKeyPlaceholder": {
+        "message": "sk-..."
+    },
+    "aiSettingsModel": {
+        "message": "Model"
+    },
+    "aiSettingsModelHelp": {
+        "message": "Model id accepted by your provider, e.g. gpt-4o, gpt-4o-mini."
+    },
+    "aiSettingsModelPlaceholder": {
+        "message": "gpt-4o"
+    },
+    "aiSettingsTemperature": {
+        "message": "Temperature"
+    },
+    "aiSettingsTemperatureHelp": {
+        "message": "Sampling creativity, 0 (focused) to 2 (varied). Tuning advice usually benefits from a low value."
+    },
+    "aiSettingsReasoningEffort": {
+        "message": "Thinking effort"
+    },
+    "aiSettingsReasoningEffortHelp": {
+        "message": "How hard the model reasons before answering. Off for speed; higher levels let reasoning models (DeepSeek, GPT-5/o-series, Claude, Qwen3) think longer for tougher tuning calls. Routing is automatic per provider."
+    },
+    "aiReasoningOff": {
+        "message": "Off"
+    },
+    "aiReasoningLow": {
+        "message": "Low"
+    },
+    "aiReasoningMedium": {
+        "message": "Medium"
+    },
+    "aiReasoningHigh": {
+        "message": "High"
+    },
+    "aiThinkingProcess": {
+        "message": "Thinking"
+    },
+    "aiThinkingInProgress": {
+        "message": "thinking…",
+        "description": "Badge shown while the model is still producing its chain-of-thought and hasn't started the answer yet"
+    },
+    "aiThinkingEffort": {
+        "message": "Thinking effort",
+        "description": "Tooltip / aria-label for the quick-toggle button in the conversation footer"
+    },
+    "aiBlackboxTerminalTitle": {
+        "message": "Blackbox analysis"
+    },
+    "aiBlackboxEmpty": {
+        "message": "No blackbox data loaded."
+    },
+    "aiBlackboxExpand": {
+        "message": "Expand blackbox analysis"
+    },
+    "aiBlackboxCollapse": {
+        "message": "Collapse blackbox analysis"
+    },
+    "aiBlackboxClear": {
+        "message": "Clear blackbox data",
+        "description": "Tooltip / aria-label for the trash button that discards the loaded blackbox digest"
+    },
+    "aiRailResize": {
+        "message": "Drag to resize the assistant panel. Double-click to reset.",
+        "description": "aria-label for the drag handle on the AI assistant rail's left edge"
+    },
+    "aiBlackboxStatusChirp": {
+        "message": "chirp"
+    },
+    "aiBlackboxStatusRegular": {
+        "message": "flight log"
+    },
+    "aiCancelled": {
+        "message": "Cancelled."
+    },
+    "aiShowApiKey": {
+        "message": "Show API key",
+        "description": "Tooltip / aria-label for the eye button that reveals the API key"
+    },
+    "aiHideApiKey": {
+        "message": "Hide API key",
+        "description": "Tooltip / aria-label for the eye button that hides the API key"
+    },
+    "aiFetchModels": {
+        "message": "Fetch",
+        "description": "Button that queries the provider for available model ids"
+    },
+    "aiSettingsModelSearchPlaceholder": {
+        "message": "Type a model id or pick one..."
+    },
+    "aiModelsFetched": {
+        "message": "{{1}} models available.",
+        "description": "Inline note after a successful fetch. {{1}} is the model count."
+    },
+    "aiFetchModelsFailed": {
+        "message": "Failed to fetch models",
+        "description": "Dialog title when the model list could not be retrieved"
+    },
+    "sidebarOpenAi": {
+        "message": "Open AI Assistant",
+        "description": "Tooltip for the sparkles icon button in the sidebar footer"
+    },
+    "aiDiagnose": {
+        "message": "Diagnose",
+        "description": "One-click diagnostic button label"
+    },
+    "aiDiagnoseTrigger": {
+        "message": "Run a one-click diagnostic on my tune.",
+        "description": "User-turn text shown in the conversation when the diagnose button is clicked"
+    },
+    "aiDiagnoseRiskLabel": {
+        "message": "Risk",
+        "description": "Label before the overall risk value in the diagnosis card"
+    },
+    "aiDiagnoseRecommendation": {
+        "message": "Recommendation",
+        "description": "Label before each finding's recommendation text"
+    },
+    "aiDiagnoseParam": {
+        "message": "Parameter"
+    },
+    "aiDiagnoseCurrent": {
+        "message": "Current"
+    },
+    "aiDiagnoseSuggested": {
+        "message": "Suggested"
+    },
+    "aiDiagnoseNoFindings": {
+        "message": "No issues found. The tune looks safe and well-balanced.",
+        "description": "Shown when a diagnosis returns an empty findings array"
+    },
+    "aiBlackboxUpload": {
+        "message": "Blackbox",
+        "description": "Button label for uploading a blackbox log file for AI analysis"
+    },
+    "aiBlackboxLoaded": {
+        "message": "Blackbox loaded",
+        "description": "Button label shown after a blackbox log has been successfully loaded"
+    },
+    "aiBlackboxNoChirp": {
+        "message": "No chirp/autotune data found in this log. Make sure you recorded a flight with autotune enabled.",
+        "description": "Error when a BBL file contains no chirp segments"
+    },
+    "aiApplySuccess": {
+        "message": "Successfully applied parameter changes."
+    },
+    "aiApplySuccessReboot": {
+        "message": "Parameter changes applied and saved. A reboot is recommended to ensure all settings take effect."
+    },
+    "aiApplyNotSupportedVersion": {
+        "message": "Firmware version too old (requires 4.5.4+)."
+    },
+    "aiApplyBackupFailed": {
+        "message": "Backup failed: {{message}}"
+    },
+    "aiApplySkipBackup": {
+        "message": "Firmware version too old for CLI backup, skipping backup step."
+    },
+    "aiApplyWriteFailed": {
+        "message": "Write failed: {{message}}"
+    },
+    "aiBlackboxNoChirpDetail": {
+        "message": "The dataflash does not contain chirp/autotune flight data. Record a flight with autotune enabled first.",
+        "description": "Detail text shown in dialog when no chirp data found in FC dataflash"
+    },
+    "aiBlackboxReadFC": {
+        "message": "Read from FC",
+        "description": "Button to pull blackbox data directly from the flight controller's dataflash"
+    },
+    "aiBlackboxReadViewer": {
+        "message": "Read from Viewer",
+        "description": "Button to read blackbox data already loaded in the Blackbox Viewer"
+    },
+    "aiStop": {
+        "message": "Stop",
+        "description": "Button to cancel an in-progress AI streaming request"
+    },
+    "aiDiagnoseApplyAll": {
+        "message": "Apply all changes",
+        "description": "Button to apply all AI-suggested parameter changes to the flight controller"
+    },
+    "aiDiagnoseApplied": {
+        "message": "Applied",
+        "description": "Badge shown after AI changes have been successfully applied"
+    },
+    "aiDiagnoseNoBackup": {
+        "message": "No backup — changes can't be reverted",
+        "description": "Badge shown when the apply succeeded but the CLI backup failed (diff all timed out / CLI mode active / firmware too old), so revert is unavailable"
+    },
+    "aiDiagnoseRevert": {
+        "message": "Revert",
+        "description": "Button to revert applied changes back to the previous configuration"
+    },
+    "aiDiagnoseApplyConfirmTitle": {
+        "message": "Apply AI suggestions?",
+        "description": "Confirmation dialog title"
+    },
+    "aiDiagnoseApplyConfirmBody": {
+        "message": "This will write the suggested parameter changes to your flight controller. A backup of your current configuration will be saved first, and you can revert afterwards.",
+        "description": "Confirmation dialog body"
+    },
+    "aiApplySuccess": {
+        "message": "AI changes saved to flight controller.",
+        "description": "gui_log message after successful apply"
+    },
+    "aiDiagnoseDataSource": {
+        "message": "AI received:",
+        "description": "Label showing what data was sent to the AI"
+    },
+    "aiDiagnoseSourceFC": {
+        "message": "FC tune",
+        "description": "Badge: flight controller tune was included"
+    },
+    "aiDiagnoseSourceNoFC": {
+        "message": "No FC",
+        "description": "Badge: no flight controller was connected"
+    },
+    "aiDiagnoseSourceBBL": {
+        "message": "Blackbox",
+        "description": "Badge: blackbox log data was included"
+    },
+    "aiRevertSuccess": {
+        "message": "Configuration reverted.",
+        "description": "gui_log message after successful revert"
+    },
+    "aiFcTerminalTitle": {
+        "message": "FC data"
+    },
+    "aiFcRefresh": {
+        "message": "Refresh"
+    },
+    "aiFcExpand": {
+        "message": "Expand FC data"
+    },
+    "aiFcCollapse": {
+        "message": "Collapse FC data"
+    },
+    "aiFcLoading": {
+        "message": "Reading flight-controller tune via MSP..."
+    },
+    "aiFcDisconnected": {
+        "message": "Flight controller not connected. Connect first, then refresh."
+    },
+    "aiFcError": {
+        "message": "Failed to read FC data"
+    },
+    "aiFcUnknownError": {
+        "message": "Unknown error"
+    },
+    "aiFcEmpty": {
+        "message": "FC snapshot looks empty. MSP may have failed or returned zeros."
+    },
+    "aiFcDetail": {
+        "message": "Detail"
+    },
+    "aiFcIdle": {
+        "message": "No FC snapshot yet. Connect a flight controller and click Refresh, or send a message / run Diagnose."
+    },
+    "aiFcStatusReady": {
+        "message": "Ready"
+    },
+    "aiFcStatusLoading": {
+        "message": "Reading"
+    },
+    "aiFcStatusEmpty": {
+        "message": "Empty"
+    },
+    "aiFcStatusError": {
+        "message": "Error"
+    },
+    "aiFcStatusDisconnected": {
+        "message": "Disconnected"
+    },
+    "aiFcStatusIdle": {
+        "message": "Idle"
     }
 }
+

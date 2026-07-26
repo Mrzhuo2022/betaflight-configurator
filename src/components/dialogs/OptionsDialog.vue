@@ -140,17 +140,111 @@
                         <USwitch v-model="settings.showPresetsWarningBackup" size="sm" />
                     </SettingRow>
                 </UiBox>
+
+                <UiBox :title="$t('aiSettingsTitle')" :help="$t('aiSettingsHelp')">
+                    <SettingRow :label="$t('aiSettingsEnabled')">
+                        <USwitch v-model="settings.aiEnabled" size="sm" />
+                    </SettingRow>
+                    <SettingRow :label="$t('aiSettingsBaseUrl')" :help="$t('aiSettingsBaseUrlHelp')" full-width>
+                        <UInput
+                            v-model="settings.aiBaseUrl"
+                            :placeholder="$t('aiSettingsBaseUrlPlaceholder')"
+                            size="sm"
+                            class="w-full"
+                        />
+                    </SettingRow>
+                    <SettingRow :label="$t('aiSettingsApiKey')" :help="$t('aiSettingsApiKeyHelp')" full-width>
+                        <UInput
+                            v-model="settings.aiApiKey"
+                            :type="showApiKey ? 'text' : 'password'"
+                            :autocomplete="'off'"
+                            :placeholder="$t('aiSettingsApiKeyPlaceholder')"
+                            size="sm"
+                            class="w-full"
+                            :ui="{ trailing: 'pe-1' }"
+                        >
+                            <template #trailing>
+                                <UButton
+                                    color="neutral"
+                                    variant="link"
+                                    size="sm"
+                                    :icon="showApiKey ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                                    :aria-label="showApiKey ? $t('aiHideApiKey') : $t('aiShowApiKey')"
+                                    :aria-pressed="showApiKey"
+                                    tabindex="-1"
+                                    @click="showApiKey = !showApiKey"
+                                />
+                            </template>
+                        </UInput>
+                    </SettingRow>
+                    <SettingRow :label="$t('aiSettingsModel')" :help="$t('aiSettingsModelHelp')" full-width>
+                        <div class="flex items-center gap-2 w-full">
+                            <USelectMenu
+                                v-model="settings.aiModel"
+                                value-key="value"
+                                :items="modelItems"
+                                create-item
+                                :placeholder="$t('aiSettingsModelPlaceholder')"
+                                :search-input="{
+                                    placeholder: $t('aiSettingsModelSearchPlaceholder'),
+                                }"
+                                size="sm"
+                                class="flex-1 min-w-40"
+                                :ui="{ content: 'max-h-72 z-3002' }"
+                                @create="onModelCreate"
+                            />
+                            <UButton
+                                :label="$t('aiFetchModels')"
+                                icon="i-lucide-refresh-cw"
+                                :loading="isLoadingModels"
+                                :disabled="!settings.aiApiKey || !settings.aiBaseUrl"
+                                size="sm"
+                                variant="soft"
+                                @click="onFetchModels"
+                            />
+                        </div>
+                        <p v-if="modelsError" class="text-xs text-error mt-1">{{ modelsError }}</p>
+                        <p v-else-if="fetchedModelsCount > 0" class="text-xs text-dimmed mt-1">
+                            {{ $t("aiModelsFetched", { 1: fetchedModelsCount }) }}
+                        </p>
+                    </SettingRow>
+                    <SettingRow :label="$t('aiSettingsTemperature')" :help="$t('aiSettingsTemperatureHelp')" full-width>
+                        <UInput
+                            v-model.number="settings.aiTemperature"
+                            type="number"
+                            :min="0"
+                            :max="2"
+                            :step="0.1"
+                            size="sm"
+                            class="w-24"
+                        />
+                    </SettingRow>
+                    <SettingRow
+                        :label="$t('aiSettingsReasoningEffort')"
+                        :help="$t('aiSettingsReasoningEffortHelp')"
+                        full-width
+                    >
+                        <USelect
+                            v-model="settings.aiReasoningEffort"
+                            :items="reasoningEffortItems"
+                            size="sm"
+                            class="w-40"
+                            :ui="{ content: 'z-3002' }"
+                        />
+                    </SettingRow>
+                </UiBox>
             </div>
         </template>
     </UModal>
 </template>
 
 <script setup>
-import { computed, onUnmounted, reactive, watch } from "vue";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { useDialog } from "@/composables/useDialog";
 import { get as getConfig, set as setConfig } from "../../js/ConfigStorage";
 import { applyUiScale, sanitizeUiScale, DEFAULT_UI_SCALE, MIN_UI_SCALE, MAX_UI_SCALE } from "../../js/UiScale";
 import { i18n } from "../../js/localization";
+import { useAiAssistant } from "@/composables/ai/useAiAssistant";
 import DeviceHandler from "../../js/device_handler";
 import CliAutoComplete from "../../js/CliAutoComplete";
 import DarkTheme, { setDarkTheme } from "../../js/DarkTheme";
@@ -168,6 +262,50 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"]);
 
 const dialog = useDialog();
+
+// --- AI assistant (model picker + key visibility) ---
+// The composable owns the shared model-list state (cached in the Pinia store so the AI tab
+// and Options stay in sync). Settings themselves remain ConfigStorage-backed via watchers below.
+const { availableModels, isLoadingModels, modelsError, fetchModels, syncSettings: syncAiStore } = useAiAssistant();
+const showApiKey = ref(false);
+const createdModels = ref([]); // models the user typed that weren't in the fetched list
+// Fixed reasoning-effort options; the value persists as ai_reasoning_effort. Provider routing
+// (OpenAI reasoning_effort vs Claude thinking.budget_tokens vs R1 stream) happens in AiApi.
+const reasoningEffortItems = [
+    { label: i18n.getMessage("aiReasoningOff") || "Off", value: "off" },
+    { label: i18n.getMessage("aiReasoningLow") || "Low", value: "low" },
+    { label: i18n.getMessage("aiReasoningMedium") || "Medium", value: "medium" },
+    { label: i18n.getMessage("aiReasoningHigh") || "High", value: "high" },
+];
+/** merged model list for the picker: fetched + user-created + the currently-selected value */
+const modelItems = computed(() => {
+    const ids = new Set([...availableModels.value, ...createdModels.value]);
+    if (settings.aiModel) {
+        ids.add(settings.aiModel);
+    }
+    return Array.from(ids).map((id) => ({ label: id, value: id }));
+});
+const fetchedModelsCount = computed(() => availableModels.value.length);
+
+function onModelCreate(item) {
+    // create-item gives us the raw string the user typed (no label/value wrapper)
+    const id = typeof item === "string" ? item : item?.value;
+    if (id && !createdModels.value.includes(id)) {
+        createdModels.value.push(id);
+    }
+    return { label: id, value: id };
+}
+
+async function onFetchModels() {
+    try {
+        // Pass the values currently in the dialog so the fetch reflects the user's edits,
+        // not whatever the store last cached.
+        await fetchModels({ baseUrl: settings.aiBaseUrl, apiKey: settings.aiApiKey });
+    } catch (e) {
+        // Error text is already surfaced inline via modelsError; dialog popup gives detail.
+        dialog.openInfo(i18n.getMessage("aiFetchModelsFailed") || "Failed to fetch models", e.message || String(e));
+    }
+}
 
 const open = computed({
     get: () => props.modelValue,
@@ -194,6 +332,12 @@ const settings = reactive({
     showPresetsWarningBackup: !!getConfig("showPresetsWarningBackup").showPresetsWarningBackup,
     automaticDevOptions: !!getConfig("automaticDevOptions", true).automaticDevOptions,
     uiScale: sanitizeUiScale(getConfig("uiScale", DEFAULT_UI_SCALE).uiScale),
+    aiEnabled: !!getConfig("ai_enabled", false).ai_enabled,
+    aiApiKey: getConfig("ai_api_key", "").ai_api_key || "",
+    aiBaseUrl: getConfig("ai_base_url", "https://api.openai.com/v1").ai_base_url || "https://api.openai.com/v1",
+    aiModel: getConfig("ai_model", "gpt-4o").ai_model || "gpt-4o",
+    aiTemperature: getConfig("ai_temperature", 0.2).ai_temperature ?? 0.2,
+    aiReasoningEffort: getConfig("ai_reasoning_effort", "off").ai_reasoning_effort || "off",
 });
 
 const availableLanguages = i18n.getLanguagesAvailables();
@@ -218,6 +362,13 @@ const syncSettingsFromStorage = () => {
     settings.showPresetsWarningBackup = !!getConfig("showPresetsWarningBackup").showPresetsWarningBackup;
     settings.automaticDevOptions = !!getConfig("automaticDevOptions", true).automaticDevOptions;
     settings.uiScale = sanitizeUiScale(getConfig("uiScale", DEFAULT_UI_SCALE).uiScale);
+    settings.aiEnabled = !!getConfig("ai_enabled", false).ai_enabled;
+    settings.aiApiKey = getConfig("ai_api_key", "").ai_api_key || "";
+    settings.aiBaseUrl =
+        getConfig("ai_base_url", "https://api.openai.com/v1").ai_base_url || "https://api.openai.com/v1";
+    settings.aiModel = getConfig("ai_model", "gpt-4o").ai_model || "gpt-4o";
+    settings.aiTemperature = getConfig("ai_temperature", 0.2).ai_temperature ?? 0.2;
+    settings.aiReasoningEffort = getConfig("ai_reasoning_effort", "off").ai_reasoning_effort || "off";
 };
 
 watch(open, (isOpen) => {
@@ -359,6 +510,55 @@ watch(
             settings.showAllSerialDevices = DEFAULT_DEVELOPMENT_OPTIONS.showAllSerialDevices;
             settings.backupOnFlash = DEFAULT_DEVELOPMENT_OPTIONS.backupOnFlash;
         }
+    },
+);
+
+// Persist AI settings AND sync the Pinia store immediately, so the embedded rail (which reads
+// from the store, not ConfigStorage) picks up changes without needing to close/reopen.
+watch(
+    () => settings.aiEnabled,
+    (value) => {
+        setConfig({ ai_enabled: value });
+        syncAiStore();
+    },
+);
+watch(
+    () => settings.aiApiKey,
+    (value) => {
+        setConfig({ ai_api_key: value });
+        syncAiStore();
+    },
+);
+watch(
+    () => settings.aiBaseUrl,
+    (value) => {
+        setConfig({ ai_base_url: value });
+        syncAiStore();
+    },
+);
+watch(
+    () => settings.aiModel,
+    (value) => {
+        setConfig({ ai_model: value });
+        syncAiStore();
+    },
+);
+watch(
+    () => settings.aiTemperature,
+    (value) => {
+        const n = Number(value);
+        if (Number.isFinite(n)) {
+            setConfig({ ai_temperature: Math.min(2, Math.max(0, n)) });
+            syncAiStore();
+        }
+    },
+);
+watch(
+    () => settings.aiReasoningEffort,
+    (value) => {
+        const allowed = ["off", "low", "medium", "high"];
+        setConfig({ ai_reasoning_effort: allowed.includes(value) ? value : "off" });
+        syncAiStore();
     },
 );
 

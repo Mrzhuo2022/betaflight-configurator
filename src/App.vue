@@ -39,7 +39,33 @@
                         />
                     </keep-alive>
                 </div>
+                <!-- Embedded AI assistant right rail (desktop / wide screens). The third flex
+                     child of #tab-content-container; #content (flex:1 1 0) yields space.
+                     Width is user-resizable via the drag handle on the left edge and persisted. -->
+                <div
+                    v-if="renderAiRailEmbedded"
+                    id="ai-assistant-rail"
+                    :style="{
+                        width: `${navigationStore.aiRailWidthPx}px`,
+                        flexBasis: `${navigationStore.aiRailWidthPx}px`,
+                    }"
+                >
+                    <div
+                        class="ai-rail-resizer"
+                        role="separator"
+                        :aria-orientation="'vertical'"
+                        :aria-label="$t('aiRailResize')"
+                        :aria-valuenow="navigationStore.aiRailWidthPx"
+                        :aria-valuemin="navigationStore.aiRailMinPx"
+                        :aria-valuemax="navigationStore.aiRailMaxPx"
+                        @mousedown.prevent="onRailResizeStart"
+                        @dblclick="onRailResizeReset"
+                    />
+                    <AiAssistantContent ref="aiRailContentRef" />
+                </div>
             </div>
+            <!-- Mobile / narrow screens: AI assistant as a slide-over panel. -->
+            <AiAssistantPanel v-if="renderAiSlideover" v-model="navigationStore.aiAssistantPanelOpen" />
             <status-bar
                 :port-usage-down="PortUsage.port_usage_down"
                 :port-usage-up="PortUsage.port_usage_up"
@@ -67,11 +93,15 @@ import { useMediaQuery } from "@vueuse/core";
 import ConnectButton from "./components/device-picker/ConnectButton.vue";
 import GlobalDialogs from "./components/dialogs/GlobalDialogs.vue";
 import Sidebar from "./components/sidebar/Sidebar.vue";
+import AiAssistantContent from "./components/ai-assistant/AiAssistantContent.vue";
+import AiAssistantPanel from "./components/ai-assistant/AiAssistantPanel.vue";
 import FCModule from "./js/fc.js";
 import MSPModule from "./js/msp.js";
 import PortUsageModule from "./js/port_usage.js";
 import CONFIGURATORModule from "./js/data_storage.js";
 import GUI from "./js/gui.js";
+import { useNavigationStore } from "./stores/navigation";
+import { useAiAssistantStore } from "./stores/aiAssistant";
 import { i18n } from "./js/localization";
 import {
     completeVueTabMount,
@@ -124,6 +154,57 @@ const isCompactBreakpoint = useMediaQuery(
 );
 const isMobileSidebarOpen = computed(() => isCompactBreakpoint.value && isRevealed.value);
 const isSidebarExpanded = computed(() => !sidebarNarrow.value || isRevealed.value);
+
+// AI assistant right rail: embedded on desktop, slide-over on mobile. Same persisted
+// toggle drives both; the two render modes are mutually exclusive by breakpoint.
+const navigationStore = useNavigationStore();
+const aiAssistantStore = useAiAssistantStore();
+const aiRailContentRef = ref(null);
+const renderAiRailEmbedded = computed(
+    () => aiAssistantStore.enabled && !isCompactBreakpoint.value && navigationStore.aiAssistantPanelOpen,
+);
+const renderAiSlideover = computed(
+    () => aiAssistantStore.enabled && isCompactBreakpoint.value && navigationStore.aiAssistantPanelOpen,
+);
+
+// User-resizable AI rail: drag the handle on the rail's left edge. The rail is on the right,
+// so dragging LEFT grows it and dragging RIGHT shrinks it → width = (startWidth + startX - moveX).
+// Global mousemove/mouseup listeners are added on drag start and removed on end; we also
+// disable text selection + native drag while active so the gesture stays clean.
+let railDragStartX = 0;
+let railDragStartWidth = 0;
+function onRailResizeMove(event) {
+    const delta = railDragStartX - event.clientX;
+    navigationStore.setAiRailWidthPx(railDragStartWidth + delta);
+}
+function onRailResizeEnd() {
+    document.body.classList.remove("ai-rail-resizing");
+    document.removeEventListener("mousemove", onRailResizeMove);
+    document.removeEventListener("mouseup", onRailResizeEnd);
+}
+function onRailResizeStart(event) {
+    railDragStartX = event.clientX;
+    railDragStartWidth = navigationStore.aiRailWidthPx;
+    document.body.classList.add("ai-rail-resizing");
+    document.addEventListener("mousemove", onRailResizeMove);
+    document.addEventListener("mouseup", onRailResizeEnd);
+}
+// Double-click the handle to snap back to the default width.
+function onRailResizeReset() {
+    navigationStore.setAiRailWidthPx(navigationStore.aiRailWidthPx === 480 ? 560 : 480);
+}
+
+// Re-sync AI settings + scroll to bottom whenever the embedded rail appears, so values
+// changed in OptionsDialog since last open take effect. (The slide-over does the same in
+// its own watch(open).)
+watch(renderAiRailEmbedded, (visible) => {
+    if (visible) {
+        nextTick(() => {
+            aiRailContentRef.value?.syncSettings?.();
+            aiRailContentRef.value?.scrollToBottom?.();
+        });
+    }
+});
 
 // Auto-close the drawer when leaving the mobile drawer breakpoint.
 watch(isCompactBreakpoint, (compact) => {

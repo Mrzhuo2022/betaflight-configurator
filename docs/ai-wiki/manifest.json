@@ -1,0 +1,77 @@
+{
+  "_comment": "Keyword → document mapping for selective wiki injection. The matcher scores each doc by how many keywords appear in the user's question + FC context, then injects the top 1-3. Keywords cover both English and Chinese since the model reasons in Chinese but the wiki is English.",
+  "documents": [
+    {
+      "file": "PID-Tuning-Guide.md",
+      "title": "PID Tuning Guide",
+      "keywords": ["pid", "p_gain", "i_gain", "d_gain", "p term", "i term", "d term", "oscillation", "propwash", "bounce", "wobble", "motor noise", "tuning", "tune", "调参", "振荡", "抖动", "电机噪声", "调"],
+      "priority": 10
+    },
+    {
+      "file": "Freestyle-Tuning-Principles.md",
+      "title": "Freestyle Tuning Principles",
+      "keywords": ["freestyle", "smooth", "cinematic", "acro", "飞手", "自由飞", "丝滑", "电影"],
+      "priority": 5
+    },
+    {
+      "file": "Dynamic-D.md",
+      "title": "Dynamic D (DMax)",
+      "keywords": ["dmax", "d_max", "d max", "d term", "d项", "d增益", "阻尼", "dampen", "d_max_gain", "d_max_advance", "dMaxRoll", "dMaxPitch", "dMaxYaw"],
+      "priority": 8
+    },
+    {
+      "file": "Feed-Forward-2-0.md",
+      "title": "Feed Forward 2.0",
+      "keywords": ["feedforward", "feed forward", "ff ", "setpoint", "前馈", "ff_transition", "feedforwardTransition", "feedforward_jitter", "feedforward_boost", "feedforward_averaging"],
+      "priority": 8
+    },
+    {
+      "file": "Dynamic-Idle.md",
+      "title": "Dynamic Idle",
+      "keywords": ["idle", "motor_idle", "空转", "dshot_idle", "idle_min_rpm", "idleMinRpm", "desync"],
+      "priority": 7
+    },
+    {
+      "file": "DSHOT-RPM-Filtering.md",
+      "title": "DSHOT RPM Filtering",
+      "keywords": ["rpm", "rpm_filter", "rpm filter", "rpm notch", "gyro_rpm_notch", "harmonics", "rpm谐波", "rpm滤波"],
+      "priority": 7
+    },
+    {
+      "file": "I-Term-Relax-Explained.md",
+      "title": "I-Term Relax Explained",
+      "keywords": ["iterm_relax", "i_term", "integral windup", "iterm relax", "积分", "itermRelax", "itermRelaxCutoff"],
+      "priority": 6
+    },
+    {
+      "file": "Black-Box-logging-and-usage.md",
+      "title": "Black Box Logging and Usage",
+      "keywords": ["blackbox", "bbl", "black box", "log", "logging", "黑匣子", "日志", "flight log"],
+      "priority": 6
+    },
+    {
+      "file": "BBE-Power-Spectral-Density-charts.md",
+      "title": "Power Spectral Density Charts",
+      "keywords": ["psd", "spectrum", "spectral", "power spectral", "频谱", "noise floor", "noise_floor", "noise peak", "noise_peaks"],
+      "priority": 6
+    },
+    {
+      "file": "Soft-Mounting-and-Noise-Reduction.md",
+      "title": "Soft Mounting and Noise Reduction",
+      "keywords": ["noise", "vibration", "soft mount", "softmount", "减振", "振动", "软垫", "motor balance", "prop balance"],
+      "priority": 5
+    },
+    {
+      "file": "Crash-Recovery.md",
+      "title": "Crash Recovery",
+      "keywords": ["crash", "crash recovery", "recovery", "崩溃", "恢复", "crashRecovery", "crash_recovery"],
+      "priority": 5
+    },
+    {
+      "file": "Deep-Dive.md",
+      "title": "Deep Dive (Comprehensive)",
+      "keywords": ["filter", "dterm", "gyro", "deep dive", "综合", "深入", "全面", "lod", "latency", "delay"],
+      "priority": 3
+    }
+  ]
+}

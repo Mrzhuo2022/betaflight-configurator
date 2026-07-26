@@ -22,7 +22,7 @@ import { i18n } from "@/js/localization";
 async function saveToEeprom() {
     // Never persist while arming is possible (matches writeConfiguration).
     if (!FC.CONFIG.armingDisabled) {
-        mspHelper.setArmingEnabled(false, false);
+        await new Promise((resolve) => mspHelper.setArmingEnabled(false, false, resolve));
     }
     await MSP.promise(MSPCodes.MSP_EEPROM_WRITE);
     gui_log(i18n.getMessage("configurationEepromSaved"));
