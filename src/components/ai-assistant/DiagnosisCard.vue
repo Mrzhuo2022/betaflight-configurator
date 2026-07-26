@@ -211,16 +211,34 @@ const applyLabel = computed(() => {
     return sel < total ? `${base} (${sel}/${total})` : base;
 });
 
+/** Escape AI-supplied strings for the v-html confirm dialog (paths/values are model output). */
+function escapeHtml(v) {
+    return String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 async function onApply() {
+    const applying = selectedChanges.value;
     const title = i18n.getMessage("aiDiagnoseApplyConfirmTitle") || "Apply AI suggestions?";
-    const body =
+    const intro =
         i18n.getMessage("aiDiagnoseApplyConfirmBody") ||
         "This will write the suggested parameter changes to your flight controller. A backup will be saved first.";
+    // Consolidated change list so the pilot reviews exactly what will be written,
+    // in one place, before confirming — instead of scanning per-finding tables.
+    const rows = applying
+        .map(
+            (c) =>
+                `<tr><td style="padding:2px 12px 2px 0"><code>${escapeHtml(c.path)}</code></td>` +
+                `<td style="padding:2px 12px 2px 0">${escapeHtml(formatVal(c.current))}</td>` +
+                `<td style="padding:2px 0"><b>→ ${escapeHtml(formatVal(c.suggested))}</b></td></tr>`,
+        )
+        .join("");
+    const body =
+        `<p>${intro}</p>` +
+        `<table style="margin-top:8px;font-size:0.85em;font-family:monospace"><tbody>${rows}</tbody></table>`;
     const confirmed = await dialog.showYesNo(title, body);
     if (!confirmed) {
         return;
     }
-    const applying = selectedChanges.value;
     const result = await apply(applying);
     if (result.ok) {
         appliedOk.value = true;
