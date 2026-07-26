@@ -359,19 +359,31 @@ td [role="group"] {
     transition: background-color 0.15s;
 }
 .ai-rail-resizer:hover,
-.ai-rail-resizer:active {
-    background-color: var(--primary-500, #3b82f6);
+.ai-rail-resizer:active,
+.ai-rail-resizer:focus-visible {
+    background-color: var(--primary-500);
     opacity: 0.5;
+}
+.ai-rail-resizer:focus-visible {
+    outline: 2px solid var(--primary-500);
+    outline-offset: -2px;
 }
 /* While dragging: lock the whole document so text doesn't get selected mid-gesture and the
    cursor stays col-resize even when the pointer leaves the handle. */
 body.ai-rail-resizing {
     cursor: col-resize;
     user-select: none;
-    -webkit-user-select: none;
 }
 body.ai-rail-resizing #ai-assistant-rail {
     transition: none; // snap during drag, animate on release
+}
+/* AI assistant terminal panels — semantic colors via CSS custom properties */
+.ai-fc-terminal {
+    background-color: var(--ai-terminal-bg, rgba(0, 0, 0, 0.8));
+    color: var(--ai-terminal-text, oklch(0.77 0.14 155));
+}
+.dark .ai-fc-terminal {
+    background-color: var(--ai-terminal-bg-dark, rgba(0, 0, 0, 0.6));
 }
 .tab_container.logopen {
     overflow-x: hidden;

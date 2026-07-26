@@ -152,6 +152,11 @@ export async function chatWithTools(api, messages, opts = {}, { signal, onLog } 
             });
 
             for (const tc of result.toolCalls) {
+                // Check abort signal before each tool execution (long CLI commands
+                // like readDumpAll can take several seconds)
+                if (signal?.aborted) {
+                    return "(cancelled)";
+                }
                 if (tc.type !== "function") continue;
                 const fnName = tc.function?.name;
                 const fnArgs = tc.function?.arguments || "{}";

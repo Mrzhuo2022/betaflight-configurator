@@ -43,7 +43,7 @@
             <div
                 v-show="fcTerminalOpen"
                 ref="fcTerminalRef"
-                class="ai-fc-terminal font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words overflow-y-auto px-3 py-2 bg-black/80 text-emerald-300/95 dark:bg-black/60"
+                class="ai-fc-terminal font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words overflow-y-auto px-3 py-2"
             >
                 <template v-if="fcFetchStatus === 'loading'">{{ $t("aiFcLoading") }}</template>
                 <template v-else-if="fcFetchStatus === 'disconnected'">{{ $t("aiFcDisconnected") }}</template>
@@ -99,7 +99,7 @@
             <div
                 v-show="blackboxTerminalOpen"
                 ref="blackboxTerminalRef"
-                class="ai-fc-terminal font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words overflow-y-auto px-3 py-2 bg-black/80 text-emerald-300/95 dark:bg-black/60"
+                class="ai-fc-terminal font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words overflow-y-auto px-3 py-2"
             >
                 {{ blackboxDigestText }}
             </div>
@@ -107,18 +107,20 @@
 
         <div class="relative rounded-lg border-2 border-neutral-500/30 flex flex-col flex-1 min-h-0 mt-3">
             <div
-                class="flex gap-2 items-center w-fit p-1 px-3 rounded-full text-[13px] font-semibold absolute top-0 left-4 -translate-y-1/2 bg-primary text-black"
+                class="flex gap-2 items-center w-fit p-1 px-3 rounded-full text-[13px] font-semibold absolute top-0 left-4 -translate-y-1/2 bg-primary text-(--surface-0)"
             >
                 {{ $t("aiConversationTitle") }}
             </div>
             <div
                 ref="logRef"
                 class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto p-3 pt-6 pr-1"
+                role="log"
+                aria-live="polite"
                 @scroll.passive="onLogScroll"
             >
                 <p v-if="!isHistoryLoaded" class="text-sm text-dimmed">{{ $t("aiHistoryLoading") }}</p>
                 <p v-else-if="!messages.length" class="text-sm text-dimmed">{{ $t("aiEmptyConversation") }}</p>
-                <template v-for="(m, i) in messages" :key="i">
+                <template v-for="(m, i) in messages" :key="m.ts ?? i">
                     <!-- Chain-of-thought sits ABOVE the answer for every assistant turn that has one. -->
                     <div
                         v-if="m.role === 'assistant' && m.reasoning"
@@ -277,7 +279,7 @@
                 />
                 <UButton
                     v-if="isConnected"
-                    :label="cliMode ? 'CLI ON' : 'CLI'"
+                    :label="cliMode ? $t('aiCliModeOn') : $t('aiCliModeOff')"
                     :icon="cliMode ? 'i-lucide-terminal' : 'i-lucide-terminal-square'"
                     :variant="cliMode ? 'soft' : 'ghost'"
                     :color="cliMode ? 'primary' : 'neutral'"
@@ -387,12 +389,13 @@ const canSend = computed(() => isEnabled.value && isConfigured.value && !!input.
 // contributor-supplied, so strip everything except <b></b> to prevent injected HTML/scripts.
 const sanitizedSetupHint = computed(() => {
     const raw = t("aiSetupHint") || "";
-    // Decode-then-re-encode: escape everything, then re-allow only <b> and </b>.
+    // Escape everything, then re-allow only bare <b></b> and <u></u> tags (no attributes).
+    // Strip any attributes from tags to prevent injection via i18n translator mistakes.
     const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return escaped
-        .replace(/&lt;b&gt;/g, "<b>")
+        .replace(/&lt;b(?:\s[^&]*?)?&gt;/g, "<b>")
         .replace(/&lt;\/b&gt;/g, "</b>")
-        .replace(/&lt;u&gt;/g, "<u>")
+        .replace(/&lt;u(?:\s[^&]*?)?&gt;/g, "<u>")
         .replace(/&lt;\/u&gt;/g, "</u>");
 });
 
@@ -499,7 +502,7 @@ async function onRefreshFc() {
         await refreshFcSnapshot();
         await scrollFcTerminalTop();
     } catch (e) {
-        dialog.openInfo("Error", e.message || String(e));
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -541,11 +544,14 @@ async function onBblFileSelected(event) {
             );
         } else {
             gui_log(`AI: digest returned null. Error: ${digestError.value || "unknown"}`);
-            dialog.openInfo("No flight data found", digestError.value || "No usable gyro data in this log.");
+            dialog.openInfo(
+                t("aiBlackboxNoData") || "No flight data found",
+                digestError.value || t("aiBlackboxNoDataDetail"),
+            );
         }
     } catch (e) {
         gui_log(`AI: digest exception: ${e.message || e}`);
-        dialog.openInfo("Error", e.message || String(e));
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -555,9 +561,13 @@ async function onReadFromFC() {
         if (summary) {
             setBlackboxDigest(summary);
             gui_log("Blackbox log loaded.");
-        } else dialog.openInfo("No flight data found", digestError.value || "No usable gyro data in dataflash.");
+        } else
+            dialog.openInfo(
+                t("aiBlackboxNoData") || "No flight data found",
+                digestError.value || t("aiBlackboxNoDataDetail"),
+            );
     } catch (e) {
-        dialog.openInfo("Error", e.message || String(e));
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -569,9 +579,13 @@ async function onReadFromViewer() {
         if (summary) {
             setBlackboxDigest(summary);
             gui_log("Blackbox log loaded.");
-        } else dialog.openInfo("No flight data found", digestError.value || "Unable to extract from viewer log.");
+        } else
+            dialog.openInfo(
+                t("aiBlackboxNoData") || "No flight data found",
+                digestError.value || t("aiBlackboxNoDataDetail"),
+            );
     } catch (e) {
-        dialog.openInfo("Error", e.message || String(e));
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -584,7 +598,7 @@ async function onDiagnose() {
         await scrollToBottom();
         await scrollFcTerminalTop();
     } catch (e) {
-        dialog.openInfo("Error", e.message || String(e));
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -608,7 +622,8 @@ watch(blackboxDigestText, () => {
     scrollBlackboxTop();
 });
 
-// During streaming, auto-scroll only if the user is already at the bottom
+// During streaming, auto-scroll only if the user is already at the bottom.
+// Declared inside <script setup> so each component instance gets its own copy.
 let _autoScroll = true;
 function onLogScroll() {
     const el = logRef.value;

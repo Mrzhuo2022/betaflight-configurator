@@ -53,6 +53,7 @@
                     <div
                         class="ai-rail-resizer"
                         role="separator"
+                        tabindex="0"
                         :aria-orientation="'vertical'"
                         :aria-label="$t('aiRailResize')"
                         :aria-valuenow="navigationStore.aiRailWidthPx"
@@ -60,6 +61,7 @@
                         :aria-valuemax="navigationStore.aiRailMaxPx"
                         @mousedown.prevent="onRailResizeStart"
                         @dblclick="onRailResizeReset"
+                        @keydown="onRailResizeKeydown"
                     />
                     <AiAssistantContent ref="aiRailContentRef" />
                 </div>
@@ -88,7 +90,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, provide, reactive, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onUnmounted, provide, reactive, ref, shallowRef, watch } from "vue";
 import { useMediaQuery } from "@vueuse/core";
 import ConnectButton from "./components/device-picker/ConnectButton.vue";
 import GlobalDialogs from "./components/dialogs/GlobalDialogs.vue";
@@ -193,6 +195,21 @@ function onRailResizeStart(event) {
 function onRailResizeReset() {
     navigationStore.setAiRailWidthPx(navigationStore.aiRailWidthPx === 480 ? 560 : 480);
 }
+// Keyboard support for the resize handle (WAI-ARIA separator pattern).
+function onRailResizeKeydown(event) {
+    const step = 16;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        event.preventDefault();
+        navigationStore.setAiRailWidthPx(navigationStore.aiRailWidthPx + step);
+    } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        event.preventDefault();
+        navigationStore.setAiRailWidthPx(navigationStore.aiRailWidthPx - step);
+    }
+}
+// Clean up drag listeners if the component unmounts mid-drag.
+onUnmounted(() => {
+    onRailResizeEnd();
+});
 
 // Re-sync AI settings + scroll to bottom whenever the embedded rail appears, so values
 // changed in OptionsDialog since last open take effect. (The slide-over does the same in

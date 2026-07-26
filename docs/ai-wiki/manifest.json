@@ -70,7 +70,7 @@
     {
       "file": "Deep-Dive.md",
       "title": "Deep Dive (Comprehensive)",
-      "keywords": ["filter", "dterm", "gyro", "deep dive", "综合", "深入", "全面", "lod", "latency", "delay"],
+      "keywords": ["deep dive", "综合", "深入", "全面", "comprehensive", "overview", "总览", "完整"],
       "priority": 3
     }
   ]

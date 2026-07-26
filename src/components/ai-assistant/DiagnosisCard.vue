@@ -49,7 +49,12 @@
 
             <!-- Read-only parameter change preview (apply lands in P3) -->
             <div v-if="f.paramChanges && f.paramChanges.length" class="mt-1">
-                <table class="w-full text-xs border-collapse">
+                <table class="w-full text-xs border-collapse" :aria-label="$t('aiDiagnoseParamChanges')">
+                    <caption class="sr-only">
+                        {{
+                            $t("aiDiagnoseParamChanges")
+                        }}
+                    </caption>
                     <thead>
                         <tr class="text-dimmed text-left">
                             <th class="font-medium py-0.5 pr-2">{{ $t("aiDiagnoseParam") }}</th>
@@ -58,7 +63,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="(c, j) in f.paramChanges" :key="j" class="border-t border-default">
+                        <tr v-for="c in f.paramChanges" :key="c.path" class="border-t border-default">
                             <td class="py-0.5 pr-2 font-mono">{{ c.path }}</td>
                             <td class="py-0.5 pr-2 font-mono">{{ formatVal(c.current) }}</td>
                             <td class="py-0.5 pr-2 font-mono text-primary font-semibold">

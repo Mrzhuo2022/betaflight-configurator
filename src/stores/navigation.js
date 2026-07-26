@@ -28,6 +28,8 @@ export const useNavigationStore = defineStore("navigation", () => {
     // in App.vue both read/write this same source of truth. Persisted so the pilot's
     // last choice survives reloads, mirroring the enabled-key pattern in stores/aiAssistant.js
     // (the project does not use pinia-plugin-persistedstate).
+    // NOTE: config keys here lack the `ai_` prefix used by stores/aiAssistant.js — kept
+    // as-is to avoid breaking existing user settings on upgrade.
     const aiAssistantPanelOpen = ref(!!getConfig("aiAssistantPanelOpen", false).aiAssistantPanelOpen);
     function setAiAssistantPanelOpen(v) {
         aiAssistantPanelOpen.value = !!v;

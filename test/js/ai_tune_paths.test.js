@@ -9,6 +9,28 @@ vi.mock("@/stores/connection", () => ({
 // sanitizeCliName is a pure function, so stub the session factory to avoid the import hang.
 vi.mock("@/composables/useMspCliSession", () => ({
     useMspCliSession: () => ({ send: vi.fn(), readDumpAll: vi.fn() }),
+    isMspCliSupported: () => false,
+    saveAndReconnect: vi.fn(),
+}));
+
+vi.mock("@/js/msp/MSPHelper", () => ({
+    mspHelper: { crunch: vi.fn(() => []) },
+}));
+
+vi.mock("@/js/msp/mspErrors", () => ({
+    isMspCancelled: () => false,
+}));
+
+vi.mock("@/composables/useReboot", () => ({
+    useReboot: () => ({ saveAndReboot: vi.fn() }),
+}));
+
+vi.mock("@/js/gui_log", () => ({
+    gui_log: vi.fn(),
+}));
+
+vi.mock("@/js/localization", () => ({
+    i18n: { getMessage: (key, params) => params?.message || key },
 }));
 
 vi.mock("@/js/msp", () => ({
@@ -264,40 +286,24 @@ describe("AI tune path alignment", () => {
         expect(text).toContain("ROLL: P=45 (PIDS[0][0])");
         expect(text).toContain("FILTER_CONFIG");
         expect(text).toContain("ADVANCED_TUNING");
-        expect(text).toContain("gyro_lowpass_dyn_min_hz".split("_")[0]); // gyro present
+        expect(text).toContain("gyro_lowpass_dyn_min_hz");
         expect(text).toContain("dyn=200-500");
     });
 
     it("maps FC roots to MSP SET codes for apply", async () => {
-        // Re-implement the mapping contract here so we lock the root names without
-        // exporting the private collectMspCodes helper.
         const MSPCodes = (await import("../../src/js/msp/MSPCodes.js")).default;
-        const { normalizeParamPath } = await import("../../src/composables/ai/validateSuggestion.js");
+        const { collectMspCodes } = await import("../../src/composables/ai/applySuggestion.js");
 
-        function collectMspCodes(changes) {
-            const codes = new Set();
-            for (const { path: rawPath } of changes) {
-                const path = normalizeParamPath(rawPath);
-                if (path.startsWith("PIDS")) codes.add(MSPCodes.MSP_SET_PID);
-                if (path.startsWith("RC_TUNING")) codes.add(MSPCodes.MSP_SET_RC_TUNING);
-                if (path.startsWith("FILTER_CONFIG")) codes.add(MSPCodes.MSP_SET_FILTER_CONFIG);
-                if (path.startsWith("ADVANCED_TUNING")) codes.add(MSPCodes.MSP_SET_PID_ADVANCED);
-                if (path.startsWith("PID_ADVANCED_CONFIG")) codes.add(MSPCodes.MSP_SET_ADVANCED_CONFIG);
-                if (path.startsWith("TUNING_SLIDERS")) codes.add(MSPCodes.MSP_SET_SIMPLIFIED_TUNING);
-                if (path.startsWith("MIXER_CONFIG")) codes.add(MSPCodes.MSP_SET_MIXER_CONFIG);
-                if (path.startsWith("MOTOR_CONFIG")) codes.add(MSPCodes.MSP_SET_MOTOR_CONFIG);
-            }
-            return [...codes].sort((a, b) => a - b);
-        }
-
-        // Aliases must still resolve after normalize.
-        const codes = collectMspCodes([
-            { path: "filterConfig.gyro_lowpass_dyn_min_hz" },
-            { path: "advancedTuning.dMaxRoll" },
-            { path: "pids[0][0]" },
-            { path: "motorConfig.minthrottle" },
-            { path: "pidAdvancedConfig.motorIdle" },
-        ]);
+        // Aliases must still resolve after normalize (collectMspCodes normalizes internally).
+        const codes = [
+            ...collectMspCodes([
+                { path: "filterConfig.gyro_lowpass_dyn_min_hz" },
+                { path: "advancedTuning.dMaxRoll" },
+                { path: "pids[0][0]" },
+                { path: "motorConfig.minthrottle" },
+                { path: "pidAdvancedConfig.motorIdle" },
+            ]),
+        ].sort((a, b) => a - b);
 
         expect(codes).toEqual(
             [
@@ -461,5 +467,76 @@ describe("AI wiki doc selection", () => {
         expect(text).toContain("Test Doc");
         expect(text).toContain("Hello world");
         expect(formatWikiContext([])).toBe("");
+    });
+
+    it("handles null/undefined input gracefully", async () => {
+        const { formatWikiContext, selectWikiDocs } = await import("../../src/composables/ai/wikiSelector.js");
+        expect(formatWikiContext(null)).toBe("");
+        expect(formatWikiContext(undefined)).toBe("");
+        const docs = await selectWikiDocs(null);
+        expect(Array.isArray(docs)).toBe(true);
+    });
+});
+
+describe("AI chatWithTools loop", () => {
+    it("returns text content when AI responds without tool calls", async () => {
+        const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
+        const mockApi = {
+            chat: vi.fn().mockResolvedValue({ content: "Hello!", toolCalls: null }),
+        };
+        const result = await chatWithTools(mockApi, [{ role: "user", content: "Hi" }]);
+        expect(result).toBe("Hello!");
+        expect(mockApi.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns (cancelled) when signal is aborted before a round", async () => {
+        const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
+        const controller = new AbortController();
+        controller.abort();
+        const mockApi = { chat: vi.fn() };
+        const result = await chatWithTools(mockApi, [], {}, { signal: controller.signal });
+        expect(result).toBe("(cancelled)");
+        expect(mockApi.chat).not.toHaveBeenCalled();
+    });
+
+    it("returns (AI tool call limit reached) after max rounds", async () => {
+        const { chatWithTools } = await import("../../src/composables/ai/useAiToolCall.js");
+        // Always return a tool call to exhaust the round limit
+        const mockApi = {
+            chat: vi.fn().mockResolvedValue({
+                content: null,
+                toolCalls: [{ id: "tc1", type: "function", function: { name: "cli_status", arguments: "{}" } }],
+            }),
+        };
+        const result = await chatWithTools(mockApi, [{ role: "user", content: "test" }]);
+        expect(result).toBe("(AI tool call limit reached)");
+        expect(mockApi.chat).toHaveBeenCalledTimes(5);
+    });
+});
+
+describe("AI validateParamChanges edge cases", () => {
+    it("returns valid for empty array", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        const result = validateParamChanges([]);
+        expect(result.valid).toBe(true);
+        expect(result.normalized).toEqual([]);
+    });
+
+    it("accepts feedforward_max_rate_limit in PARAM_RANGES", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        const result = validateParamChanges([
+            { path: "ADVANCED_TUNING.feedforward_max_rate_limit", current: 0, suggested: 100 },
+        ]);
+        expect(result.valid).toBe(true);
+        expect(result.errors).toEqual([]);
+    });
+
+    it("rejects out-of-range feedforward_max_rate_limit", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        const result = validateParamChanges([
+            { path: "ADVANCED_TUNING.feedforward_max_rate_limit", current: 0, suggested: 99999 },
+        ]);
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(" ")).toMatch(/feedforward_max_rate_limit/);
     });
 });

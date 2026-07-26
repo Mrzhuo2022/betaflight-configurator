@@ -27,7 +27,10 @@ function openDB() {
             }
         };
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+        request.onerror = () => {
+            dbPromise = null; // Allow retry on next call
+            reject(request.error);
+        };
     });
     return dbPromise;
 }

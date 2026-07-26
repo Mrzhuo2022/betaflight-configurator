@@ -1,4 +1,5 @@
 import FC from "@/js/fc";
+import { getByPath } from "./pathUtils";
 
 /**
  * Parameter range definitions. Derived from MSPHelper.js crunch() push8/push16 patterns.
@@ -92,6 +93,7 @@ const PARAM_RANGES = {
     "ADVANCED_TUNING.vbat_sag_compensation": { min: 0, max: 255 },
     "ADVANCED_TUNING.thrustLinearization": { min: 0, max: 255 },
     "ADVANCED_TUNING.autoProfileCellCount": { min: -128, max: 127 },
+    "ADVANCED_TUNING.feedforward_max_rate_limit": { min: 0, max: 65535 },
 
     // TUNING_SLIDERS (all U8)
     "TUNING_SLIDERS.slider_master_multiplier": { min: 0, max: 255 },
@@ -196,21 +198,6 @@ export function normalizeParamPath(path) {
     const [, root, rest] = match;
     const canonical = PATH_PREFIX_ALIASES[root] || root;
     return `${canonical}${rest}`;
-}
-
-/**
- * Resolve a dot/bracket path on an object. Returns undefined if not found.
- */
-function getByPath(obj, path) {
-    const parts = path.replace(/\[(\d+)\]/g, ".$1").split(".");
-    let cur = obj;
-    for (const p of parts) {
-        if (cur == null) {
-            return undefined;
-        }
-        cur = cur[p];
-    }
-    return cur;
 }
 
 /**

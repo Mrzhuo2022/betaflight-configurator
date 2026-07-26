@@ -9790,6 +9790,9 @@
     "preflightNotamLastFetched": {
         "message": "上次获取时间"
     },
+    "tabAiAssistant": {
+        "message": "AI 助手"
+    },
     "aiConversationTitle": {
         "message": "对话"
     },
@@ -9807,6 +9810,21 @@
     },
     "aiClear": {
         "message": "清空"
+    },
+    "aiCliModeOn": {
+        "message": "CLI 已开启"
+    },
+    "aiCliModeOff": {
+        "message": "CLI"
+    },
+    "aiErrorTitle": {
+        "message": "错误"
+    },
+    "aiBlackboxNoData": {
+        "message": "未找到飞行数据"
+    },
+    "aiBlackboxNoDataDetail": {
+        "message": "此日志中没有可用的陀螺仪数据。"
     },
     "aiRoleUser": {
         "message": "你"
@@ -9943,6 +9961,9 @@
     "aiFetchModelsFailed": {
         "message": "获取模型列表失败"
     },
+    "sidebarOpenAi": {
+        "message": "打开 AI 助手"
+    },
     "aiDiagnose": {
         "message": "诊断"
     },
@@ -9975,9 +9996,6 @@
     },
     "aiBlackboxNoChirp": {
         "message": "此日志中未找到 chirp/自动调参数据。请确保录制了已启用自动调参的飞行日志。"
-    },
-    "aiApplySuccess": {
-        "message": "已成功应用参数更改。"
     },
     "aiApplySuccessReboot": {
         "message": "参数更改已应用并保存。建议重启飞控以确保所有设置生效。"
@@ -10026,6 +10044,9 @@
     },
     "aiApplySuccess": {
         "message": "AI 修改已保存到飞控。"
+    },
+    "aiDiagnoseParamChanges": {
+        "message": "建议的参数更改"
     },
     "aiDiagnoseDataSource": {
         "message": "AI 收到的数据："

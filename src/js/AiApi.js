@@ -33,7 +33,7 @@ const DEFAULT_MODEL = "gpt-4o";
  * Claude 3.5 Haiku does not support extended thinking at all and is excluded.
  */
 const REASONING_BUDGET_TOKENS = { low: 4096, medium: 10000, high: 24000 };
-const REASONING_NO_THINKING_MODELS = /haiku/i;
+const REASONING_NO_THINKING_MODELS = /\bhaiku\b/i;
 
 /**
  * Resolve provider-specific reasoning params to merge into the chat-completion body.
@@ -59,14 +59,19 @@ export function resolveReasoningParams(model, effort) {
     }
 
     // OpenAI o-series / GPT-5 family: top-level reasoning_effort (no on/off switch).
-    if (/^(o\d|o1|o3|o4|gpt-5)/i.test(model)) {
+    if (/^(o\d+|gpt-5)/i.test(model)) {
         if (!effort || effort === "off") return {};
         return { reasoning_effort: effort };
     }
     // Anthropic Claude (via OpenAI-compatible proxies): thinking budget (no on/off switch).
     if (/claude/i.test(model)) {
         if (!effort || effort === "off") return {};
-        return { thinking: { type: "enabled", budget_tokens: REASONING_BUDGET_TOKENS[effort] } };
+        return {
+            thinking: {
+                type: "enabled",
+                budget_tokens: REASONING_BUDGET_TOKENS[effort] || REASONING_BUDGET_TOKENS.medium,
+            },
+        };
     }
     // R1-style models that take no request param (Qwen3/Grok via proxies): reasoning, if any,
     // arrives via the streaming reasoning_content field — handled in streamChat.
@@ -203,13 +208,17 @@ export class AiApi {
         }
         Object.assign(body, resolveReasoningParams(effectiveModel, reasoningEffort));
 
-        const IDLE_TIMEOUT_MS = 20000;
+        const IDLE_TIMEOUT_MS = 60000;
         let idleTimer = null;
+        // Use an internal controller for idle timeout so we don't abort the caller's signal
+        // (which may be shared with other operations).
+        const idleController = new AbortController();
+        const combinedSignal = signal ? AbortSignal.any([signal, idleController.signal]) : idleController.signal;
 
         const resetIdle = () => {
             clearTimeout(idleTimer);
             idleTimer = setTimeout(() => {
-                signal?.abort?.();
+                idleController.abort();
             }, IDLE_TIMEOUT_MS);
         };
 
@@ -219,7 +228,7 @@ export class AiApi {
                 method: "POST",
                 headers: this._headers(),
                 body: JSON.stringify(body),
-                signal,
+                signal: combinedSignal,
             });
             if (!res.ok) {
                 const text = await res.text().catch(() => "");
@@ -276,7 +285,10 @@ export class AiApi {
         } catch (e) {
             if (e instanceof AiApiError) throw e;
             if (e.name === "AbortError") {
-                throw new AiApiError("AI request was cancelled or timed out (no data received for 20 s).");
+                if (signal?.aborted) {
+                    throw new AiApiError("AI request was cancelled.");
+                }
+                throw new AiApiError(`AI stream timed out (no data received for ${IDLE_TIMEOUT_MS / 1000}s).`);
             }
             throw new AiApiError(
                 `AI stream failed: ${e.message}. If you are on the web/PWA build, the provider may be blocking CORS.`,

@@ -41,9 +41,11 @@ const MAX_CHARS_PER_DOC = 8000; // cap each doc so the total injection stays tok
 function scoreDocs(haystack) {
     const h = (haystack || "").toLowerCase();
     const scored = [];
-    for (const doc of manifest.documents) {
+    const docs = manifest?.documents || [];
+    for (const doc of docs) {
         let score = 0;
-        for (const kw of doc.keywords) {
+        const keywords = doc.keywords || [];
+        for (const kw of keywords) {
             const k = kw.toLowerCase().trim();
             if (!k) continue;
             if (h.includes(k)) {

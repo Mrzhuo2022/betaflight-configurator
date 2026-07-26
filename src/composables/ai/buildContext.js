@@ -83,9 +83,7 @@ async function fetchTuningData() {
     const ok = [];
     const failed = [];
 
-    // Prefer the live module, fall back to the window global used by legacy tabs.
-    const msp = MSP || (typeof window !== "undefined" ? window.MSP : null);
-    if (!msp || typeof msp.promise !== "function") {
+    if (!MSP || typeof MSP.promise !== "function") {
         failed.push({ label: "MSP", error: "MSP module unavailable" });
         return { ok, failed };
     }
@@ -107,7 +105,7 @@ async function fetchTuningData() {
 
     for (const { code, label } of TUNE_MSP_SEQUENCE) {
         try {
-            await msp.promise(code);
+            await MSP.promise(code);
             ok.push(label);
         } catch (e) {
             failed.push({ label, error: e?.message || String(e) });
@@ -191,8 +189,8 @@ function shapePids() {
 /**
  * Pick the tuning-relevant advanced fields and annotate with path hints.
  */
-function shapeAdvancedTuning() {
-    const a = FC.ADVANCED_TUNING || {};
+function shapeAdvancedTuning(raw) {
+    const a = raw || FC.ADVANCED_TUNING || {};
     return {
         feedforward: {
             roll: a.feedforwardRoll,
@@ -227,14 +225,13 @@ function shapeAdvancedTuning() {
         idleMinRpm: a.idleMinRpm,
         vbat_sag_compensation: a.vbat_sag_compensation,
         thrustLinearization: a.thrustLinearization,
-        // Raw object kept so the model can quote exact field paths for apply.
+        // Path hint so the model can quote exact field paths for apply.
         _rawPaths: "ADVANCED_TUNING.<fieldName>",
-        _raw: clone(a),
     };
 }
 
-function shapeFilters() {
-    const f = FC.FILTER_CONFIG || {};
+function shapeFilters(raw) {
+    const f = raw || FC.FILTER_CONFIG || {};
     return {
         gyro: {
             lpf1_static_hz: f.gyro_lowpass_hz,
@@ -272,12 +269,11 @@ function shapeFilters() {
         yaw_lowpass_hz: f.yaw_lowpass_hz,
         // Exact FC field names for paramChanges paths.
         _rawPaths: "FILTER_CONFIG.<fieldName>",
-        _raw: clone(f),
     };
 }
 
-function shapeRates() {
-    const r = FC.RC_TUNING || {};
+function shapeRates(raw) {
+    const r = raw || FC.RC_TUNING || {};
     return {
         rates_type: r.rates_type,
         roll: { rc_rate: r.RC_RATE, srate: r.roll_rate, expo: r.RC_EXPO, rate_limit: r.roll_rate_limit },
@@ -291,7 +287,6 @@ function shapeRates() {
             limit_percent: r.throttleLimitPercent,
         },
         _rawPaths: "RC_TUNING.<fieldName>",
-        _raw: clone(r),
     };
 }
 
@@ -322,27 +317,36 @@ export async function buildTuneContext({ includeFeatures = true } = {}) {
         mspFailed: fetchResult.failed,
     };
 
+    // Clone shared FC objects once to avoid double-cloning in shaped + raw sections.
+    const rawAdvancedTuning = clone(FC.ADVANCED_TUNING);
+    const rawFilterConfig = clone(FC.FILTER_CONFIG);
+    const rawRcTuning = clone(FC.RC_TUNING);
+    const rawTuningSliders = clone(FC.TUNING_SLIDERS);
+    const rawMixerConfig = clone(FC.MIXER_CONFIG);
+    const rawMotorConfig = clone(FC.MOTOR_CONFIG);
+    const rawPidAdvancedConfig = clone(FC.PID_ADVANCED_CONFIG);
+
     const context = {
         meta,
         // Human-readable shapes first — these are what the model should reason over.
         pids: shapePids(),
-        advancedTuning: shapeAdvancedTuning(),
-        filters: shapeFilters(),
-        rates: shapeRates(),
-        tuningSliders: clone(FC.TUNING_SLIDERS),
-        mixerConfig: clone(FC.MIXER_CONFIG),
-        motorConfig: clone(FC.MOTOR_CONFIG),
-        pidAdvancedConfig: clone(FC.PID_ADVANCED_CONFIG),
+        advancedTuning: shapeAdvancedTuning(rawAdvancedTuning),
+        filters: shapeFilters(rawFilterConfig),
+        rates: shapeRates(rawRcTuning),
+        tuningSliders: rawTuningSliders,
+        mixerConfig: rawMixerConfig,
+        motorConfig: rawMotorConfig,
+        pidAdvancedConfig: rawPidAdvancedConfig,
         // Raw FC-shaped objects for exact path application. paramChanges[].path
         // MUST use these root names so validate/apply can resolve them on FC.
         PIDS: clone(FC.PIDS),
-        ADVANCED_TUNING: clone(FC.ADVANCED_TUNING),
-        RC_TUNING: clone(FC.RC_TUNING),
-        FILTER_CONFIG: clone(FC.FILTER_CONFIG),
-        TUNING_SLIDERS: clone(FC.TUNING_SLIDERS),
-        MIXER_CONFIG: clone(FC.MIXER_CONFIG),
-        MOTOR_CONFIG: clone(FC.MOTOR_CONFIG),
-        PID_ADVANCED_CONFIG: clone(FC.PID_ADVANCED_CONFIG),
+        ADVANCED_TUNING: rawAdvancedTuning,
+        RC_TUNING: rawRcTuning,
+        FILTER_CONFIG: rawFilterConfig,
+        TUNING_SLIDERS: rawTuningSliders,
+        MIXER_CONFIG: rawMixerConfig,
+        MOTOR_CONFIG: rawMotorConfig,
+        PID_ADVANCED_CONFIG: rawPidAdvancedConfig,
         pathConvention: {
             roots: TUNE_PATH_ROOTS,
             examples: [
@@ -524,8 +528,16 @@ export async function buildTuneContextPayload(opts) {
         return null;
     }
     // Strip internal bookkeeping from the JSON sent to the model — keep it on the
-    // returned object for the UI terminal.
+    // returned object for the UI terminal. Also strip _rawPaths from shaped sub-objects
+    // to reduce prompt token usage.
     const { _populated, _fetch, ...promptCtx } = ctx;
+    // Remove _rawPaths from shaped sub-objects in the prompt copy
+    for (const key of ["advancedTuning", "filters", "rates"]) {
+        if (promptCtx[key] && typeof promptCtx[key] === "object") {
+            const { _rawPaths, ...rest } = promptCtx[key];
+            promptCtx[key] = rest;
+        }
+    }
     return {
         context: ctx,
         text: formatTuneContextText(ctx),

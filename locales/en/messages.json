@@ -10169,6 +10169,26 @@
     "aiClear": {
         "message": "Clear"
     },
+    "aiCliModeOn": {
+        "message": "CLI ON",
+        "description": "Label for CLI mode toggle button when enabled"
+    },
+    "aiCliModeOff": {
+        "message": "CLI",
+        "description": "Label for CLI mode toggle button when disabled"
+    },
+    "aiErrorTitle": {
+        "message": "Error",
+        "description": "Generic dialog title for error messages"
+    },
+    "aiBlackboxNoData": {
+        "message": "No flight data found",
+        "description": "Dialog title when blackbox log contains no usable flight data"
+    },
+    "aiBlackboxNoDataDetail": {
+        "message": "No usable gyro data in this log.",
+        "description": "Dialog body when blackbox log contains no usable flight data"
+    },
     "aiRoleUser": {
         "message": "You"
     },
@@ -10360,9 +10380,6 @@
         "message": "No chirp/autotune data found in this log. Make sure you recorded a flight with autotune enabled.",
         "description": "Error when a BBL file contains no chirp segments"
     },
-    "aiApplySuccess": {
-        "message": "Successfully applied parameter changes."
-    },
     "aiApplySuccessReboot": {
         "message": "Parameter changes applied and saved. A reboot is recommended to ensure all settings take effect."
     },
@@ -10421,6 +10438,10 @@
     "aiApplySuccess": {
         "message": "AI changes saved to flight controller.",
         "description": "gui_log message after successful apply"
+    },
+    "aiDiagnoseParamChanges": {
+        "message": "Suggested parameter changes",
+        "description": "Accessible table caption for the parameter changes preview table"
     },
     "aiDiagnoseDataSource": {
         "message": "AI received:",

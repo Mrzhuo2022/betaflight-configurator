@@ -99,13 +99,16 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
             return;
         }
         savePending = true;
-        do {
-            saveAgain = false;
-            // Snapshot through JSON so later reactive mutations don't change an in-flight save.
-            const snapshot = JSON.parse(JSON.stringify(messages.value));
-            await saveHistoryToDB(snapshot);
-        } while (saveAgain);
-        savePending = false;
+        try {
+            do {
+                saveAgain = false;
+                // Snapshot through JSON so later reactive mutations don't change an in-flight save.
+                const snapshot = JSON.parse(JSON.stringify(messages.value));
+                await saveHistoryToDB(snapshot);
+            } while (saveAgain);
+        } finally {
+            savePending = false;
+        }
     }
 
     function scheduleSave() {
@@ -186,7 +189,9 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
         historyClearedDuringLoad = true;
         messages.value = [];
         lastError.value = "";
-        clearHistoryFromDB();
+        clearHistoryFromDB().catch((err) => {
+            console.error("AI history clear failed:", err);
+        });
     }
     function setBusy(v) {
         isBusy.value = !!v;

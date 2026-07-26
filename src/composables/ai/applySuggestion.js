@@ -7,46 +7,16 @@ import { isMspCancelled } from "@/js/msp/mspErrors";
 import { useMspCliSession, isMspCliSupported, saveAndReconnect } from "@/composables/useMspCliSession";
 import { useReboot } from "@/composables/useReboot";
 import { normalizeParamPath, validateParamChanges } from "./validateSuggestion";
+import { getByPath, setByPath } from "./pathUtils";
 import { gui_log } from "@/js/gui_log";
 import { i18n } from "@/js/localization";
 
 /**
- * Resolve a dot/bracket path to set a value on the FC object.
- */
-function setByPath(obj, path, value) {
-    const parts = path.replace(/\[(\d+)\]/g, ".$1").split(".");
-    let cur = obj;
-    for (let i = 0; i < parts.length - 1; i++) {
-        cur = cur[parts[i]];
-        if (cur == null) {
-            return false;
-        }
-    }
-    cur[parts[parts.length - 1]] = value;
-    return true;
-}
-
-/**
- * Resolve a dot/bracket path to read a value from an object. Returns undefined if not found.
- * Mirrors the private getter in validateSuggestion.js — kept local to avoid coupling.
- */
-function getByPath(obj, path) {
-    const parts = path.replace(/\[(\d+)\]/g, ".$1").split(".");
-    let cur = obj;
-    for (const p of parts) {
-        if (cur == null) {
-            return undefined;
-        }
-        cur = cur[p];
-    }
-    return cur;
-}
-
-/**
  * Determine which MSP SET commands are needed based on the param paths being changed.
  * Paths must already be normalized to FC roots (PIDS, RC_TUNING, FILTER_CONFIG, ...).
+ * Exported for unit testing.
  */
-function collectMspCodes(changes) {
+export function collectMspCodes(changes) {
     const codes = new Set();
     for (const { path: rawPath } of changes) {
         const path = normalizeParamPath(rawPath);
@@ -95,7 +65,7 @@ function collectMspCodes(changes) {
 export function useApplySuggestion() {
     const isApplying = ref(false);
     const error = ref("");
-    const lastBackup = ref(null);
+    const { saveAndReboot } = useReboot();
 
     /**
      * Apply parameter changes to the FC.
@@ -105,6 +75,10 @@ export function useApplySuggestion() {
      * @returns {Promise<{ok: boolean, revert?: Function, error?: string}>}
      */
     async function apply(changes) {
+        // Guard against overlapping apply() calls sharing the same refs
+        if (isApplying.value) {
+            return { ok: false, error: "Apply already in progress." };
+        }
         error.value = "";
 
         // 1. Validate + normalize model paths (camelCase aliases → FC roots)
@@ -165,9 +139,7 @@ export function useApplySuggestion() {
                         }
                     }
                 }
-                if (backup) {
-                    lastBackup.value = backup;
-                }
+                // Backup stored locally for revert; not exposed to callers (dead code removed).
             }
 
             // 3. Apply changes to the FC object, then encode + send MSP, then persist.
@@ -194,7 +166,6 @@ export function useApplySuggestion() {
                 // changes only after a reboot; without it the FC keeps running the old values.
                 // saveAndReboot() = writeConfiguration() + reinitializeConnection(), matching
                 // the PresetsTab flow that correctly picks up new params after apply.
-                const { saveAndReboot } = useReboot();
                 await saveAndReboot();
             } catch (mspErr) {
                 // Roll FC back to the pre-apply state so it matches the firmware we failed to
@@ -206,7 +177,6 @@ export function useApplySuggestion() {
                 throw mspErr;
             }
 
-            isApplying.value = false;
             gui_log(
                 i18n.getMessage("aiApplySuccessReboot") ||
                     "Parameter changes applied and saved. A reboot is recommended to ensure all settings take effect.",
@@ -220,8 +190,8 @@ export function useApplySuggestion() {
             };
         } catch (e) {
             if (isMspCancelled(e)) {
-                // Tab switch or disconnect — not a real failure
-                return { ok: true };
+                // Tab switch or disconnect — changes may not be fully saved
+                return { ok: true, interrupted: true };
             }
             const msg = i18n.getMessage("aiApplyWriteFailed", { message: e.message }) || `Write failed: ${e.message}`;
             error.value = msg;
@@ -238,6 +208,9 @@ export function useApplySuggestion() {
      * @returns {Promise<{ok: boolean, error?: string}>}
      */
     async function revert(backup) {
+        if (isApplying.value) {
+            return { ok: false, error: "Operation already in progress." };
+        }
         if (!backup || !backup.length) {
             return { ok: false, error: "No backup available." };
         }
@@ -276,5 +249,5 @@ export function useApplySuggestion() {
         }
     }
 
-    return { isApplying, error, lastBackup, apply, revert };
+    return { isApplying, error, apply, revert };
 }
