@@ -10228,7 +10228,7 @@
         "description": "Shown when AI is ready but no FC is connected"
     },
     "aiRequestFailed": {
-        "message": "AI request failed"
+        "message": "AI request failed: {{message}}"
     },
     "aiErrorDisabled": {
         "message": "AI assistant is disabled. Enable it in Options."
@@ -10317,6 +10317,102 @@
     },
     "aiCancelled": {
         "message": "Cancelled."
+    },
+    "aiDiagnoseRevertFailed": {
+        "message": "Revert failed",
+        "description": "Title of the dialog shown when reverting applied AI changes fails"
+    },
+    "aiDiagnoseApplyInterruptedTitle": {
+        "message": "Apply interrupted",
+        "description": "Title of the dialog shown when the connection drops mid-apply"
+    },
+    "aiDiagnoseApplyInterrupted": {
+        "message": "The connection was lost while writing parameters. Changes may not have been saved — reconnect and verify your tune.",
+        "description": "Body of the dialog shown when the connection drops mid-apply"
+    },
+    "aiToolCallLimit": {
+        "message": "(AI tool call limit reached — please ask a more specific question)",
+        "description": "Shown when the AI exhausts its CLI tool-call rounds"
+    },
+    "aiBusy": {
+        "message": "Another AI request is already in progress.",
+        "description": "Guard message when a second AI request is attempted while one is running"
+    },
+    "aiCliTabActive": {
+        "message": "The CLI tab is active — close it before using AI CLI-assisted chat.",
+        "description": "Guard message when the classic CLI tab owns the serial connection"
+    },
+    "aiResponseTruncated": {
+        "message": "Response was truncated by the provider's output limit.",
+        "description": "Appended when the model reply hits finish_reason=length"
+    },
+    "aiApplyInProgress": {
+        "message": "Apply already in progress.",
+        "description": "Guard when apply/revert is called while another is running"
+    },
+    "aiRevertNoBackup": {
+        "message": "No backup available.",
+        "description": "Revert attempted without a stored backup"
+    },
+    "aiRevertErrors": {
+        "message": "Revert had {{count}} error(s).",
+        "description": "Revert finished but some CLI lines errored"
+    },
+    "aiRevertFailed": {
+        "message": "Revert failed: {{message}}",
+        "description": "Revert threw an error"
+    },
+    "aiSeverityCritical": {
+        "message": "Critical",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiSeverityWarning": {
+        "message": "Warning",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiSeverityInfo": {
+        "message": "Info",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiRiskLow": {
+        "message": "Low",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiRiskMedium": {
+        "message": "Medium",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiRiskHigh": {
+        "message": "High",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiAreaPID": {
+        "message": "PID",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaFilter": {
+        "message": "Filter",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaRate": {
+        "message": "Rates",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaRC": {
+        "message": "RC",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaMotor": {
+        "message": "Motor",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaFeature": {
+        "message": "Feature",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaOther": {
+        "message": "Other",
+        "description": "Diagnosis finding area badge"
     },
     "aiShowApiKey": {
         "message": "Show API key",

@@ -79,11 +79,14 @@ export function resolveReasoningParams(model, effort) {
 }
 
 export class AiApiError extends Error {
-    constructor(message, { status = 0, body = "" } = {}) {
+    constructor(message, { status = 0, body = "", cancelled = false } = {}) {
         super(message);
         this.name = "AiApiError";
         this.status = status;
         this.body = body;
+        // True when the error represents a deliberate user-initiated cancel, so callers can
+        // distinguish it from a failure without matching on message text.
+        this.cancelled = cancelled;
     }
 }
 
@@ -162,6 +165,9 @@ export class AiApi {
             content: msg?.content || "",
             reasoning: typeof reasoning === "string" ? reasoning : "",
             toolCalls: msg?.tool_calls || null,
+            // "length" means the provider hit max_tokens / output budget — callers should warn
+            // that a truncated JSON or answer is not the model's complete output.
+            finishReason: data?.choices?.[0]?.finish_reason || null,
         };
     }
 
@@ -232,6 +238,10 @@ export class AiApi {
 
         let reader = null;
         try {
+            // Arm the idle timer BEFORE connecting: a server that accepts the request but never
+            // sends response headers must produce a timeout error, not an uncancellable hang
+            // (the timer was previously first armed only after `await fetch` resolved).
+            resetIdle();
             const res = await fetch(`${this.baseUrl}/chat/completions`, {
                 method: "POST",
                 headers: this._headers(),
@@ -251,6 +261,7 @@ export class AiApi {
             let buf = "";
             let full = "";
             let reasoning = "";
+            let finishReason = null;
             // Streamed tool calls arrive as fragments keyed by index: the first delta has
             // id/name, later deltas append to function.arguments. Accumulate then reassemble.
             const toolCallsAcc = [];
@@ -258,6 +269,7 @@ export class AiApi {
                 content: full,
                 reasoning,
                 toolCalls: toolCallsAcc.length ? toolCallsAcc.filter(Boolean) : null,
+                finishReason,
             });
 
             resetIdle();
@@ -270,12 +282,20 @@ export class AiApi {
                 buf += decoder.decode(value, { stream: true });
 
                 let idx;
-                while ((idx = buf.indexOf("\n\n")) >= 0) {
+                // SSE events are separated by a blank line; the spec allows both LF and CRLF
+                // line endings, so split on either (a literal "\n\n" match would strand
+                // CRLF providers with a full buffer and zero parsed events).
+                while ((idx = buf.search(/\r?\n\r?\n/)) >= 0) {
+                    const sep = buf.slice(idx).match(/^\r?\n\r?\n/)[0];
                     const event = buf.slice(0, idx);
-                    buf = buf.slice(idx + 2);
-                    const dataLine = event.split("\n").find((l) => l.startsWith("data:"));
-                    if (!dataLine) continue;
-                    const payload = dataLine.slice(5).trim();
+                    buf = buf.slice(idx + sep.length);
+                    // Multi-line `data:` fields are joined with "\n" per the SSE spec.
+                    const dataLines = event
+                        .split(/\r?\n/)
+                        .filter((line) => line.startsWith("data:"))
+                        .map((line) => line.slice(5).replace(/^ /, ""));
+                    if (!dataLines.length) continue;
+                    const payload = dataLines.join("\n");
                     if (payload === "[DONE]") return finish();
                     let json;
                     try {
@@ -284,7 +304,11 @@ export class AiApi {
                         continue;
                     }
 
-                    const delta = json?.choices?.[0]?.delta;
+                    const choice = json?.choices?.[0];
+                    const delta = choice?.delta;
+                    if (choice?.finish_reason) {
+                        finishReason = choice.finish_reason;
+                    }
                     const answer = delta?.content || "";
                     if (answer) {
                         full += answer;
@@ -307,7 +331,17 @@ export class AiApi {
                             }
                             const acc = toolCallsAcc[i];
                             if (frag.id) acc.id = frag.id;
-                            if (frag.function?.name) acc.function.name += frag.function.name;
+                            if (frag.function?.name) {
+                                // OpenAI streams the name once as a fragment; some compatible
+                                // proxies resend the full name in every delta. When the incoming
+                                // chunk extends what we already have, treat it as the full name
+                                // (replace) — otherwise keep concatenating fragments.
+                                acc.function.name = acc.function.name
+                                    ? frag.function.name.startsWith(acc.function.name)
+                                        ? frag.function.name
+                                        : acc.function.name + frag.function.name
+                                    : frag.function.name;
+                            }
                             if (frag.function?.arguments) acc.function.arguments += frag.function.arguments;
                         }
                     }
@@ -318,7 +352,7 @@ export class AiApi {
             if (e instanceof AiApiError) throw e;
             if (e.name === "AbortError") {
                 if (signal?.aborted) {
-                    throw new AiApiError("AI request was cancelled.");
+                    throw new AiApiError("AI request was cancelled.", { cancelled: true });
                 }
                 throw new AiApiError(`AI stream timed out (no data received for ${IDLE_TIMEOUT_MS / 1000}s).`);
             }
@@ -371,7 +405,7 @@ export class AiApi {
             // Distinguish user-cancelled (external signal) from a hard timeout so the caller
             // can surface the right message.
             if (external?.aborted) {
-                throw new AiApiError("AI request was cancelled.");
+                throw new AiApiError("AI request was cancelled.", { cancelled: true });
             }
             if (e.name === "AbortError") {
                 throw new AiApiError(`AI request timed out after ${this.timeoutMs}ms.`);

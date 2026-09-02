@@ -78,7 +78,8 @@ export function useApplySuggestion() {
     async function apply(changes) {
         // Guard against overlapping apply() calls sharing the same refs
         if (isApplying.value) {
-            return { ok: false, error: "Apply already in progress." };
+            const msg = i18n.getMessage("aiApplyInProgress") || "Apply already in progress.";
+            return { ok: false, error: msg };
         }
         error.value = "";
 
@@ -130,6 +131,9 @@ export function useApplySuggestion() {
                     try {
                         backup = await cliSession.readDumpAll();
                     } catch (e) {
+                        // Always log the failure — a first-attempt failure that succeeds on
+                        // retry still signals an unhealthy serial link worth seeing in the log.
+                        gui_log(`AI: CLI backup attempt ${attempt + 1} failed: ${e.message}`);
                         if (attempt === 1) {
                             // Last attempt failed: degrade gracefully instead of aborting.
                             backupSkipped = true;
@@ -193,8 +197,12 @@ export function useApplySuggestion() {
             };
         } catch (e) {
             if (isMspCancelled(e)) {
-                // Tab switch or disconnect — changes may not be fully saved
-                return { ok: true, interrupted: true };
+                // Tab switch or disconnect — changes may not be fully saved. Report as NOT ok
+                // (ok:true made DiagnosisCard show "Applied" and record the batch into the
+                // applied-change log, teaching the model a tune state that may not exist).
+                // FC values were already rolled back by the inner catch above.
+                gui_log("AI: apply interrupted (MSP cancelled) — FC state rolled back");
+                return { ok: false, interrupted: true };
             }
             const msg = i18n.getMessage("aiApplyWriteFailed", { message: e.message }) || `Write failed: ${e.message}`;
             error.value = msg;
@@ -212,10 +220,12 @@ export function useApplySuggestion() {
      */
     async function revert(backup) {
         if (isApplying.value) {
-            return { ok: false, error: "Operation already in progress." };
+            const msg = i18n.getMessage("aiApplyInProgress") || "Apply already in progress.";
+            return { ok: false, error: msg };
         }
         if (!backup || !backup.length) {
-            return { ok: false, error: "No backup available." };
+            const msg = i18n.getMessage("aiRevertNoBackup") || "No backup available.";
+            return { ok: false, error: msg };
         }
 
         isApplying.value = true;
@@ -233,7 +243,9 @@ export function useApplySuggestion() {
             const result = await cliSession.runBatch(finalCommands);
 
             if (result.errors.length > 0) {
-                const msg = `Revert had ${result.errors.length} error(s).`;
+                const msg =
+                    i18n.getMessage("aiRevertErrors", { count: result.errors.length }) ||
+                    `Revert had ${result.errors.length} error(s).`;
                 error.value = msg;
                 return { ok: false, error: msg };
             }
@@ -244,7 +256,7 @@ export function useApplySuggestion() {
             gui_log(i18n.getMessage("aiRevertSuccess") || "Configuration reverted.");
             return { ok: true };
         } catch (e) {
-            const msg = `Revert failed: ${e.message}`;
+            const msg = i18n.getMessage("aiRevertFailed", { message: e.message }) || `Revert failed: ${e.message}`;
             error.value = msg;
             return { ok: false, error: msg };
         } finally {

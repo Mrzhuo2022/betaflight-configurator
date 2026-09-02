@@ -87,7 +87,9 @@ export async function digestBlackboxData(data, apiVersion) {
                 const sr = computeSampleRate(sysConfig);
                 const axes = {};
                 for (const seg of chirpData.segments) {
-                    const name = AXIS_NAMES[seg.axis];
+                    // Out-of-range axis indices would create an "undefined" key and feed
+                    // garbage to the model as primary evidence — name them explicitly instead.
+                    const name = AXIS_NAMES[seg.axis] || `axis${seg.axis}`;
                     if (axes[name]) continue;
                     const len = seg.endIdx - seg.startIdx + 1;
                     const fftN = Math.min(4096, Math.max(256, nextPow2(Math.floor(sr * 0.5))));

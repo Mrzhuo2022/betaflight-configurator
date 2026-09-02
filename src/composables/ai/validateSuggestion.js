@@ -201,6 +201,33 @@ export function normalizeParamPath(path) {
 }
 
 /**
+ * Paths whose FC encoding scales by 100 (crunch multiplies before push), so fractional
+ * human-readable values are legal. Every other field is written as a whole U8/U16/I8 and
+ * must be suggested as an integer — a decimal would be silently truncated on encode,
+ * leaving the UI and the firmware disagreeing.
+ */
+const FRACTIONAL_PATHS = new Set([
+    "RC_TUNING.RC_RATE",
+    "RC_TUNING.RC_EXPO",
+    "RC_TUNING.roll_rate",
+    "RC_TUNING.pitch_rate",
+    "RC_TUNING.yaw_rate",
+    "RC_TUNING.throttle_MID",
+    "RC_TUNING.throttle_EXPO",
+    "RC_TUNING.RC_YAW_EXPO",
+    "RC_TUNING.rcYawRate",
+    "RC_TUNING.rcPitchRate",
+    "RC_TUNING.RC_PITCH_EXPO",
+    "RC_TUNING.throttle_HOVER",
+    "ADVANCED_TUNING.tpaRate",
+    "PID_ADVANCED_CONFIG.motorIdle",
+]);
+
+/** Path segments that must never be written through (they resolve to meta/inherited
+ *  properties and would corrupt the FC object instead of updating a parameter). */
+const FORBIDDEN_SEGMENTS = new Set(["length", "__proto__", "constructor", "prototype"]);
+
+/**
  * Validate a set of parameter changes against FC field definitions.
  *
  * @param {Array<{path: string, current: *, suggested: *}>} changes
@@ -231,20 +258,39 @@ export function validateParamChanges(changes) {
             continue;
         }
 
-        // 2. Existence check on FC
-        const current = getByPath(FC, path);
-        if (current === undefined) {
-            errors.push(`Parameter "${path}" not found on flight controller.`);
+        // 2. Reject meta/inherited segments: a naive existence check happily resolves
+        // "PIDS.length" or a "__proto__" walk, and setByPath would then truncate the PIDS
+        // array or pollute a prototype instead of writing a parameter.
+        const segments = path.replace(/\[(\d+)\]/g, ".$1").split(".");
+        const badSegment = segments.find((seg) => FORBIDDEN_SEGMENTS.has(seg));
+        if (badSegment !== undefined) {
+            errors.push(`Path "${path}" contains forbidden segment "${badSegment}".`);
             continue;
         }
 
-        // 3. Value type check
+        // 3. Existence check on FC — own property of the parent object only, so inherited
+        // members can never validate a hallucinated path.
+        const parent = getByPath(FC, segments.slice(0, -1).join("."));
+        const leaf = segments[segments.length - 1];
+        if (parent == null || typeof parent !== "object" || !Object.hasOwn(parent, leaf)) {
+            errors.push(`Parameter "${path}" not found on flight controller.`);
+            continue;
+        }
+        const current = parent[leaf];
+
+        // 4. Value type check
         if (typeof suggested !== "number" || !Number.isFinite(suggested)) {
             errors.push(`Non-numeric value for "${path}": ${JSON.stringify(suggested)}.`);
             continue;
         }
 
-        // 4. Range check (if we have a range definition)
+        // 5. Integer check (see FRACTIONAL_PATHS for the only legal decimals).
+        if (!FRACTIONAL_PATHS.has(path) && !Number.isInteger(suggested)) {
+            errors.push(`"${path}" expects an integer value, got ${suggested}.`);
+            continue;
+        }
+
+        // 6. Range check (if we have a range definition)
         const range = PARAM_RANGES[path];
         if (range) {
             if (suggested < range.min || suggested > range.max) {
@@ -252,7 +298,7 @@ export function validateParamChanges(changes) {
             }
         }
 
-        // 5. PIDS array range (all U8 0-255)
+        // 7. PIDS array range (all U8 0-255)
         if (prefix === "PIDS" && (suggested < 0 || suggested > 255)) {
             errors.push(`PID value ${suggested} for "${path}" is outside [0, 255].`);
         }

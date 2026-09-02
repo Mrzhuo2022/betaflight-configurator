@@ -135,7 +135,7 @@
                         />
                     </div>
                 </div>
-                <template v-for="(m, i) in messages" :key="m.ts ?? i">
+                <template v-for="(m, i) in messages" :key="m.id ?? i">
                     <!-- Chain-of-thought sits ABOVE the answer for every assistant turn that has one. -->
                     <div
                         v-if="m.role === 'assistant' && m.reasoning"
@@ -144,14 +144,14 @@
                         <button
                             type="button"
                             class="flex items-center gap-2 w-full px-2 py-1.5 text-xs font-semibold text-primary"
-                            @click="toggleThinking(i)"
+                            @click="toggleThinking(m.id ?? i)"
                         >
                             <span class="i-lucide-brain"></span>
                             <span>{{ $t("aiThinkingProcess") }}</span>
-                            <span class="ml-auto">{{ isThinkingOpen(i) ? "▾" : "▸" }}</span>
+                            <span class="ml-auto">{{ isThinkingOpen(m.id ?? i) ? "▾" : "▸" }}</span>
                         </button>
                         <div
-                            v-show="isThinkingOpen(i)"
+                            v-show="isThinkingOpen(m.id ?? i)"
                             class="font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-3 pb-2 pt-0 max-h-64 overflow-y-auto text-dimmed"
                         >
                             {{ m.reasoning }}
@@ -244,13 +244,13 @@
                     <span>{{ toolCallStatus }}…</span>
                 </div>
                 <div
-                    v-if="isBusy && streamingContent"
+                    v-if="isBusy && renderedStreamingContent"
                     class="text-sm rounded-lg p-2 max-w-[85%] self-start bg-default/40 shrink-0"
                 >
                     <span class="font-semibold text-xs uppercase text-dimmed">{{ $t("aiRoleAssistant") }}</span>
                     <div
                         class="ai-markdown break-words [overflow-wrap:anywhere]"
-                        v-html="renderMarkdown(streamingContent)"
+                        v-html="renderMarkdown(renderedStreamingContent)"
                     ></div>
                 </div>
             </div>
@@ -307,7 +307,7 @@
                     :label="$t('aiDiagnose')"
                     icon="i-lucide-stethoscope"
                     :loading="isBusy"
-                    :disabled="!isConfigured || !isEnabled"
+                    :disabled="isBusy || !isConfigured || !isEnabled"
                     variant="soft"
                     size="sm"
                     @click="onDiagnose"
@@ -333,7 +333,7 @@
                     :disabled="isBusy"
                     class="flex-1 min-w-[8rem]"
                     size="sm"
-                    @keydown.enter.prevent="send"
+                    @keydown.enter.exact.prevent="send"
                 />
                 <UButton
                     v-if="isConnected"
@@ -354,7 +354,7 @@
                     @click="send"
                 />
                 <UButton
-                    v-if="isStreaming"
+                    v-if="canCancel"
                     :label="$t('aiStop')"
                     icon="i-lucide-octagon-x"
                     color="error"
@@ -395,7 +395,7 @@ import { useBlackboxDigest } from "@/composables/ai/digestBlackbox";
 import { useDataflashPull } from "@/composables/useDataflashPull";
 import { useDialog } from "@/composables/useDialog";
 import { useLogStore } from "@/blackbox-viewer/stores/log";
-import bvPinia from "@/blackbox-viewer/pinia_instance";
+import { pinia } from "@/js/pinia_instance";
 import { gui_log } from "@/js/gui_log";
 import FC from "@/js/fc";
 import { useNavigationStore } from "@/stores/navigation";
@@ -403,14 +403,50 @@ import { useNavigationStore } from "@/stores/navigation";
 // Configure marked for safe, minimal output.
 marked.setOptions({ breaks: true, gfm: true });
 
-/**
- * Render Markdown text to sanitized HTML. Used for assistant messages only —
- * user messages remain plain text. DOMPurify strips any script/event injection.
- */
+// Finished messages are immutable, so their rendered HTML is cached. During streaming every
+// token delta would otherwise re-parse and re-sanitize the WHOLE conversation (each
+// v-html="renderMarkdown(...)" binding re-evaluates on any re-render), which visibly janks
+// long chats. The cache is keyed by exact content and dropped once it grows stale.
+const markdownCache = new Map();
+const MARKDOWN_CACHE_MAX = 200;
+
 function renderMarkdown(text) {
     if (!text) return "";
+    const cached = markdownCache.get(text);
+    if (cached !== undefined) {
+        return cached;
+    }
     const raw = marked.parse(text);
-    return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+    const html = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+    if (markdownCache.size >= MARKDOWN_CACHE_MAX) {
+        markdownCache.clear();
+    }
+    markdownCache.set(text, html);
+    return html;
+}
+
+// Live streaming bubble: throttle re-rendering to ~10 fps. Content still grows every token
+// (so the cache never hits), but parsing sanitized markdown per token is wasted work when
+// the eye can't read faster than this. The watches are registered further below, AFTER
+// streamingContent/isBusy are destructured — script setup runs top-to-bottom, so
+// referencing them here would hit the TDZ and crash the component on mount.
+const renderedStreamingContent = ref("");
+let _lastStreamRender = 0;
+let _streamRenderTimer = null;
+function scheduleStreamRender() {
+    const now = Date.now();
+    if (now - _lastStreamRender >= 100) {
+        _lastStreamRender = now;
+        renderedStreamingContent.value = streamingContent.value;
+        return;
+    }
+    if (!_streamRenderTimer) {
+        _streamRenderTimer = setTimeout(() => {
+            _streamRenderTimer = null;
+            _lastStreamRender = Date.now();
+            renderedStreamingContent.value = streamingContent.value;
+        }, 100);
+    }
 }
 
 const { t } = useTranslation();
@@ -420,6 +456,7 @@ const {
     isHistoryLoaded,
     isBusy,
     isStreaming,
+    canCancel,
     streamingContent,
     streamingReasoning,
     toolCallStatus,
@@ -438,6 +475,7 @@ const {
     cancelStreaming,
     resetConversation,
     refreshFcSnapshot,
+    clearFcSnapshot,
     syncSettings,
     setBlackboxDigest,
     clearBlackboxDigest,
@@ -446,8 +484,18 @@ const {
 } = useAiAssistant();
 const { isProcessing: isDigesting, error: digestError, digest, digestBlackboxData } = useBlackboxDigest();
 const { pulling: isPulling, progress: pullProgress, available: dataflashAvailable, pull } = useDataflashPull();
-const logStore = useLogStore(bvPinia);
+const logStore = useLogStore(pinia);
 const dialog = useDialog();
+
+// Throttled streaming-bubble render (see scheduleStreamRender above for rationale).
+watch(streamingContent, scheduleStreamRender);
+watch(isBusy, (busy) => {
+    if (!busy) {
+        clearTimeout(_streamRenderTimer);
+        _streamRenderTimer = null;
+        renderedStreamingContent.value = "";
+    }
+});
 
 const viewerHasLog = computed(() => !!logStore.hasLog && logStore.flightLogDataArray instanceof Uint8Array);
 const input = ref("");
@@ -458,13 +506,14 @@ const fcTerminalOpen = ref(true);
 const blackboxTerminalOpen = ref(true);
 const thinkingPanelOpen = ref(false); // live stream: collapsed by default, click to expand
 // Per-message open state for finished turns. Default collapsed so the conversation reads
-// cleanly; expand to inspect the chain-of-thought.
+// cleanly; expand to inspect the chain-of-thought. Keyed by message id (stable across
+// inserts/re-sorts) rather than array index.
 const thinkingOpenMap = ref({});
-function isThinkingOpen(i) {
-    return thinkingOpenMap.value[i] === true;
+function isThinkingOpen(id) {
+    return thinkingOpenMap.value[id] === true;
 }
-function toggleThinking(i) {
-    thinkingOpenMap.value = { ...thinkingOpenMap.value, [i]: !isThinkingOpen(i) };
+function toggleThinking(id) {
+    thinkingOpenMap.value = { ...thinkingOpenMap.value, [id]: !isThinkingOpen(id) };
 }
 const bblFileInput = ref(null);
 const cliMode = ref(false);
@@ -597,6 +646,11 @@ async function send() {
     if (isBusy.value) return;
     const text = input.value.trim();
     if (!text) return;
+    if (!isEnabled.value || !isConfigured.value) {
+        // Keyboard users bypass the disabled Send button; route them to setup like canSend does.
+        openOptions();
+        return;
+    }
     input.value = "";
     try {
         if (cliMode.value && isConnected.value) {
@@ -607,7 +661,9 @@ async function send() {
         await scrollToBottom();
         await scrollFcTerminalTop();
     } catch (e) {
-        if (e.name !== "AbortError") dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
+        // User cancels are handled inside the composable (no rethrow); anything arriving
+        // here is a real failure worth a dialog.
+        dialog.openInfo(t("aiErrorTitle") || "Error", e.message || String(e));
     }
 }
 
@@ -758,6 +814,10 @@ onMounted(() => {
 watch(isConnected, (connected) => {
     if (connected) {
         refreshFcSnapshot().catch(() => {});
+    } else {
+        // Drop the stale snapshot: the FC terminal must not keep showing a green "Ready"
+        // badge for a board that is no longer plugged in.
+        clearFcSnapshot();
     }
 });
 watch(lastFcSummary, () => {
@@ -780,73 +840,3 @@ watch(streamingContent, () => {
     if (_autoScroll && logRef.value) logRef.value.scrollTop = logRef.value.scrollHeight;
 });
 </script>
-
-<style scoped>
-.ai-log {
-    scroll-behavior: smooth;
-}
-.ai-fc-terminal {
-    max-height: 11rem;
-    min-height: 4.5rem;
-    scrollbar-width: thin;
-}
-/* Markdown rendered content (via v-html) needs :deep() to pierce scoped styles */
-.ai-markdown :deep(p) {
-    margin: 0 0 0.4em;
-}
-.ai-markdown :deep(p:last-child) {
-    margin-bottom: 0;
-}
-.ai-markdown :deep(ul),
-.ai-markdown :deep(ol) {
-    padding-left: 1.25em;
-    margin: 0.25em 0;
-}
-.ai-markdown :deep(li) {
-    margin: 0.15em 0;
-}
-.ai-markdown :deep(code) {
-    background: var(--surface-200);
-    padding: 0.1em 0.3em;
-    border-radius: 0.25rem;
-    font-size: 0.9em;
-}
-.ai-markdown :deep(pre) {
-    background: var(--surface-200);
-    padding: 0.5em 0.75em;
-    border-radius: 0.375rem;
-    overflow-x: auto;
-    margin: 0.4em 0;
-}
-.ai-markdown :deep(pre code) {
-    background: none;
-    padding: 0;
-}
-.ai-markdown :deep(h1),
-.ai-markdown :deep(h2),
-.ai-markdown :deep(h3) {
-    font-weight: 600;
-    margin: 0.5em 0 0.25em;
-    font-size: 1em;
-}
-.ai-markdown :deep(table) {
-    border-collapse: collapse;
-    margin: 0.4em 0;
-    font-size: 0.85em;
-}
-.ai-markdown :deep(th),
-.ai-markdown :deep(td) {
-    border: 1px solid var(--surface-300);
-    padding: 0.2em 0.5em;
-}
-.ai-markdown :deep(th) {
-    font-weight: 600;
-    background: var(--surface-100);
-}
-.ai-markdown :deep(blockquote) {
-    border-left: 3px solid var(--primary-500);
-    padding-left: 0.75em;
-    margin: 0.4em 0;
-    color: var(--ui-text-dimmed);
-}
-</style>

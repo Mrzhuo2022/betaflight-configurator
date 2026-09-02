@@ -134,6 +134,7 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
             if (!historyClearedDuringLoad) {
                 messages.value = mergeHistory(stored, messages.value);
             }
+            messages.value.forEach(assignId);
             isHistoryLoaded.value = true;
             const saved = await saveHistoryToDB(messages.value);
             if (saved && Array.isArray(legacy) && legacy.length > 0) {
@@ -187,8 +188,21 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
     }
 
     // --- actions: conversation ---
+    // Monotonic per-message id: v-for keys and per-message UI state (thinking panel) need a
+    // stable identity — `ts` collides when two messages land in the same millisecond, and an
+    // array index shifts on every pop/merge.
+    let _nextMessageId = 1;
+    function assignId(message) {
+        if (message.id === undefined) {
+            message.id = _nextMessageId++;
+        }
+        return message;
+    }
+
     function addMessage(role, content, suggestion = null, reasoning = "", isError = false) {
-        messages.value.push({ role, content, suggestion, reasoning: reasoning || "", isError, ts: Date.now() });
+        messages.value.push(
+            assignId({ role, content, suggestion, reasoning: reasoning || "", isError, ts: Date.now() }),
+        );
         scheduleSave();
     }
     /**
@@ -282,7 +296,9 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
         baseUrl.value =
             getConfig("ai_base_url", "https://api.openai.com/v1").ai_base_url || "https://api.openai.com/v1";
         model.value = getConfig("ai_model", "gpt-4o").ai_model || "gpt-4o";
-        temperature.value = getConfig("ai_temperature", 0.2).ai_temperature ?? 0.2;
+        // Route through the setter so a stale/corrupt stored value gets the same 0..2 clamp
+        // the UI applies (and a non-numeric value is ignored, as when saving).
+        setTemperature(getConfig("ai_temperature", temperature.value).ai_temperature);
         reasoningEffort.value = getConfig("ai_reasoning_effort", "off").ai_reasoning_effort || "off";
     }
 

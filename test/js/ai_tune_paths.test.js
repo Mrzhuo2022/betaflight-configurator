@@ -30,7 +30,9 @@ vi.mock("@/js/gui_log", () => ({
 }));
 
 vi.mock("@/js/localization", () => ({
-    i18n: { getMessage: (key, params) => params?.message || key },
+    // Return undefined like a missing translation so tests exercise the English fallbacks
+    // that ship in the code (the i18n resource bundle is not loaded in unit tests).
+    i18n: { getMessage: () => undefined },
 }));
 
 vi.mock("@/js/msp", () => ({
@@ -717,7 +719,7 @@ describe("AI chatWithTools loop", () => {
             }),
         };
         const result = await chatWithTools(mockApi, [{ role: "user", content: "test" }]);
-        expect(result).toBe("(AI tool call limit reached)");
+        expect(result).toBe("(AI tool call limit reached — please ask a more specific question)");
         expect(mockApi.streamChat).toHaveBeenCalledTimes(5);
     });
 
@@ -778,5 +780,38 @@ describe("AI validateParamChanges edge cases", () => {
         ]);
         expect(result.valid).toBe(false);
         expect(result.errors.join(" ")).toMatch(/feedforward_max_rate_limit/);
+    });
+});
+
+describe("AI validateParamChanges path hardening", () => {
+    it("rejects meta/inherited segments that would corrupt the FC object on write", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        // "PIDS.length" used to pass the existence check and then truncate the live PIDS
+        // array via setByPath; a __proto__ walk could pollute prototypes.
+        for (const path of ["PIDS.length", "PIDS.__proto__.polluted", "ADVANCED_TUNING.constructor.x"]) {
+            const result = validateParamChanges([{ path, current: 1, suggested: 2 }]);
+            expect(result.valid, path).toBe(false);
+            expect(result.errors.join(" "), path).toMatch(/forbidden segment/);
+        }
+    });
+
+    it("rejects integer-only fields given fractional values (they are truncated on encode)", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        const result = validateParamChanges([
+            { path: "PIDS[0][0]", current: 45, suggested: 45.7 },
+            { path: "FILTER_CONFIG.gyro_lowpass_hz", current: 200, suggested: 180.5 },
+        ]);
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(" ")).toMatch(/expects an integer/);
+    });
+
+    it("still accepts fractional values on *100-scaled fields", async () => {
+        const { validateParamChanges } = await import("../../src/composables/ai/validateSuggestion.js");
+        const result = validateParamChanges([
+            { path: "RC_TUNING.roll_rate", current: 1.7, suggested: 1.9 },
+            { path: "PID_ADVANCED_CONFIG.motorIdle", current: 5.5, suggested: 6.0 },
+        ]);
+        expect(result.valid).toBe(true);
+        expect(result.errors).toEqual([]);
     });
 });

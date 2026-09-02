@@ -19,14 +19,14 @@
                 variant="subtle"
             />
             <span v-if="suggestion.snapshot.blackbox" class="text-dimmed"
-                >({{ suggestion.snapshot.blackbox.axes.join(", ") }})</span
+                >({{ suggestion.snapshot.blackbox.axes?.join(", ") }})</span
             >
         </div>
         <!-- Summary + overall risk badge -->
         <div class="flex items-start gap-2">
             <UBadge
                 :color="riskColor"
-                :label="$t('aiDiagnoseRiskLabel') + ': ' + (suggestion.overallRisk || 'low')"
+                :label="$t('aiDiagnoseRiskLabel') + ': ' + riskLabel"
                 size="sm"
                 variant="subtle"
             />
@@ -37,8 +37,13 @@
 
         <div v-for="(f, i) in findings" :key="i" class="rounded-md border border-default p-2 flex flex-col gap-1">
             <div class="flex items-center gap-2 flex-wrap">
-                <UBadge :color="severityColor(f.severity)" :label="f.severity" size="xs" variant="subtle" />
-                <UBadge v-if="f.area" :label="f.area" color="neutral" size="xs" variant="subtle" />
+                <UBadge
+                    :color="severityColor(f.severity)"
+                    :label="severityLabel(f.severity)"
+                    size="xs"
+                    variant="subtle"
+                />
+                <UBadge v-if="f.area" :label="areaLabel(f.area)" color="neutral" size="xs" variant="subtle" />
                 <span class="font-semibold">{{ f.title }}</span>
             </div>
             <p v-if="f.finding">{{ f.finding }}</p>
@@ -64,7 +69,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="c in f.paramChanges" :key="c.path" class="border-t border-default">
+                        <tr v-for="(c, ci) in f.paramChanges" :key="ci" class="border-t border-default">
                             <td class="py-0.5 pr-1">
                                 <UCheckbox
                                     v-model="checked[c.path]"
@@ -128,6 +133,7 @@
 
 <script setup>
 import { computed, reactive, ref } from "vue";
+import { useTranslation } from "i18next-vue";
 import { useApplySuggestion } from "@/composables/ai/applySuggestion";
 import { useDialog } from "@/composables/useDialog";
 import { i18n } from "@/js/localization";
@@ -137,6 +143,8 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["applied"]);
+
+const { t } = useTranslation();
 
 const { isApplying, error: applyError, apply } = useApplySuggestion();
 const dialog = useDialog();
@@ -163,6 +171,35 @@ function severityColor(sev) {
     }
     return "neutral";
 }
+
+// Model-supplied enums (severity/area/overallRisk) arrive as raw English tokens; map them
+// through i18n so zh_CN (and future locales) don't show untranslated badges.
+const SEVERITY_LABEL_KEYS = {
+    critical: "aiSeverityCritical",
+    warning: "aiSeverityWarning",
+    info: "aiSeverityInfo",
+};
+function severityLabel(sev) {
+    return t(SEVERITY_LABEL_KEYS[sev] || "aiSeverityInfo");
+}
+const AREA_LABEL_KEYS = {
+    PID: "aiAreaPID",
+    filter: "aiAreaFilter",
+    rate: "aiAreaRate",
+    rc: "aiAreaRC",
+    motor: "aiAreaMotor",
+    feature: "aiAreaFeature",
+    other: "aiAreaOther",
+};
+function areaLabel(area) {
+    return t(AREA_LABEL_KEYS[area] || "aiAreaOther");
+}
+const RISK_LABEL_KEYS = {
+    low: "aiRiskLow",
+    medium: "aiRiskMedium",
+    high: "aiRiskHigh",
+};
+const riskLabel = computed(() => t(RISK_LABEL_KEYS[props.suggestion?.overallRisk] || "aiRiskLow"));
 
 const riskColor = computed(() => {
     const risk = props.suggestion?.overallRisk;
@@ -240,6 +277,16 @@ async function onApply() {
         return;
     }
     const result = await apply(applying);
+    if (result.interrupted) {
+        // Connection dropped mid-write: changes may not have been saved. Don't show the
+        // "Applied" badge or record the batch — the pilot must reconnect and re-check.
+        dialog.openInfo(
+            i18n.getMessage("aiDiagnoseApplyInterruptedTitle") || "Apply interrupted",
+            i18n.getMessage("aiDiagnoseApplyInterrupted") ||
+                "The connection was lost while writing parameters. Changes may not have been saved — reconnect and verify your tune.",
+        );
+        return;
+    }
     if (result.ok) {
         appliedOk.value = true;
         revertFn.value = typeof result.revert === "function" ? result.revert : null;

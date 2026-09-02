@@ -1,4 +1,4 @@
-import { computed, onUnmounted } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import { useAiAssistantStore } from "@/stores/aiAssistant";
 import { useConnectionStore } from "@/stores/connection";
 import { useDialog } from "@/composables/useDialog";
@@ -161,8 +161,8 @@ function parseDiagnosis(raw) {
     return obj;
 }
 
-function makeApi(store) {
-    return new AiApi({ baseUrl: store.baseUrl, apiKey: store.apiKey });
+function makeApi(store, { timeoutMs } = {}) {
+    return new AiApi({ baseUrl: store.baseUrl, apiKey: store.apiKey, ...(timeoutMs ? { timeoutMs } : {}) });
 }
 
 /**
@@ -197,18 +197,36 @@ export function useAiAssistant() {
 
     // Abort controllers for cancelling in-flight requests. _abort covers streaming chat,
     // _cliAbort covers the multi-round cliAsk tool loop (which otherwise runs unbounded).
+    // The *_active refs back `canCancel` so the UI can show the Stop button for request
+    // types that stream nothing visible (diagnose) as well.
     let _abort = null;
     let _cliAbort = null;
+    const _abortActive = ref(false);
+    const _cliAbortActive = ref(false);
     const isStreaming = computed(() => store.isBusy && (!!store.streamingContent || !!store.streamingReasoning));
+    const canCancel = computed(() => store.isBusy && (_abortActive.value || _cliAbortActive.value));
 
     function cancelStreaming() {
         if (_abort) {
             _abort.abort();
             _abort = null;
         }
+        _abortActive.value = false;
         if (_cliAbort) {
             _cliAbort.abort();
             _cliAbort = null;
+        }
+        _cliAbortActive.value = false;
+    }
+
+    /**
+     * Shared guard for the request entry points: the store is a singleton, so two concurrent
+     * ask/diagnose/cliAsk calls would interleave their streams into the same streaming state
+     * and double-fire the MSP snapshot fetch.
+     */
+    function assertNotBusy() {
+        if (store.isBusy) {
+            throw new Error(i18n.getMessage("aiBusy") || "Another AI request is already in progress.");
         }
     }
 
@@ -224,6 +242,8 @@ export function useAiAssistant() {
      * @param {object} [args.responseFormat]
      * @param {(raw:string)=>{content:string, suggestion?:object}} [args.postProcess]
      * @param {boolean} [args.stream]       Use streaming for free-form answers (ask only).
+     * @param {number} [args.timeoutMs]     Override the AiApi request timeout (diagnose needs
+     *   more than the 60 s default: reasoning models routinely exceed it in JSON mode).
      * @returns {Promise<object|string>}  the suggestion object if postProcess returned one, else content
      */
     async function runChat({
@@ -235,6 +255,7 @@ export function useAiAssistant() {
         postProcess,
         stream = false,
         extraContext = "",
+        timeoutMs,
     }) {
         if (!store.enabled) {
             throw new Error(i18n.getMessage("aiErrorDisabled") || "AI assistant is disabled.");
@@ -245,6 +266,7 @@ export function useAiAssistant() {
                     "AI service is not configured. Set API key/base URL in Options.",
             );
         }
+        assertNotBusy();
 
         store.addMessage("user", userText);
         store.setBusy(true);
@@ -317,7 +339,7 @@ export function useAiAssistant() {
                 gui_log(`AI: injected ${wikiDocs.map((d) => d.title).join(", ")}`);
             }
 
-            const api = makeApi(store);
+            const api = makeApi(store, { timeoutMs });
             const payload = [
                 { role: "system", content: systemPrompt },
                 // Carry only role+content of prior turns to avoid leaking suggestion objects.
@@ -345,6 +367,7 @@ export function useAiAssistant() {
             // Fallback to non-stream only if stream is explicitly disabled.
             if (stream !== false) {
                 _abort = new AbortController();
+                _abortActive.value = true;
                 const streamed = await api.streamChat(payload, {
                     ...baseOpts,
                     signal: _abort.signal,
@@ -368,9 +391,20 @@ export function useAiAssistant() {
                 if (responseFormat) {
                     chatOpts.responseFormat = responseFormat;
                 }
+                // Create an abort controller even for non-streaming requests so Stop works
+                // for diagnose too (previously only streaming chat was cancellable).
+                _abort = new AbortController();
+                _abortActive.value = true;
+                chatOpts.signal = _abort.signal;
                 const result = await api.chat(payload, chatOpts);
                 reply = result?.content || "";
                 reasoning = result?.reasoning || "";
+                // A provider that hit its output budget returns truncated content with a
+                // normal 2xx response — flag it, or a failed diagnose JSON parse is
+                // indistinguishable from a model mistake.
+                if (result?.finishReason === "length" && reply) {
+                    reply += `\n\n⚠️ ${i18n.getMessage("aiResponseTruncated") || "Response was truncated by the provider's output limit."}`;
+                }
             }
 
             store.clearStreamingContent();
@@ -383,13 +417,23 @@ export function useAiAssistant() {
             // may find the partial analysis useful rather than losing it entirely.
             const partial = store.streamingContent || "";
             store.clearStreamingContent();
-            const msg = e instanceof AiApiError ? e.message : `AI request failed: ${e.message}`;
+            // A deliberate user cancel is not a failure: acknowledge it like cliAsk does,
+            // instead of persisting a retryable error bubble and popping an error dialog.
+            if (e instanceof AiApiError && e.cancelled) {
+                store.addMessage("assistant", `⚠️ ${i18n.getMessage("aiCancelled") || "Cancelled."}`);
+                return "";
+            }
+            const msg =
+                e instanceof AiApiError
+                    ? e.message
+                    : i18n.getMessage("aiRequestFailed", { message: e.message }) || `AI request failed: ${e.message}`;
             store.setError(msg);
             const content = partial ? `${partial}\n\n⚠️ ${msg}` : `⚠️ ${msg}`;
             store.addMessage("assistant", content, null, "", true);
             gui_log(`AI assistant error: ${msg}`);
             throw e;
         } finally {
+            _abortActive.value = false;
             store.setBusy(false);
         }
     }
@@ -414,6 +458,22 @@ export function useAiAssistant() {
         if (!trimmed) return "";
         if (!store.enabled) throw new Error(i18n.getMessage("aiErrorDisabled") || "AI assistant is disabled.");
         if (!store.isConfigured) throw new Error(i18n.getMessage("aiErrorNotConfigured") || "Not configured.");
+        assertNotBusy();
+        // The classic CLI tab owns the serial receive path; every tool call would time out
+        // (same guard as buildContext / applySuggestion). Fail fast with a clear message.
+        let cliBlocked = false;
+        try {
+            const { default: CONFIGURATOR } = await import("@/js/data_storage");
+            cliBlocked = !!CONFIGURATOR?.cliActive;
+        } catch {
+            // data_storage unavailable (tests) — assume not blocked.
+        }
+        if (cliBlocked) {
+            throw new Error(
+                i18n.getMessage("aiCliTabActive") ||
+                    "The CLI tab is active — close it before using AI CLI-assisted chat.",
+            );
+        }
 
         store.addMessage("user", trimmed);
         store.setBusy(true);
@@ -421,6 +481,7 @@ export function useAiAssistant() {
         store.clearStreamingContent();
 
         _cliAbort = new AbortController();
+        _cliAbortActive.value = true;
         try {
             const api = makeApi(store);
             const systemPrompt =
@@ -492,7 +553,7 @@ export function useAiAssistant() {
             const partial = store.streamingContent || "";
             store.clearStreamingContent();
             // User-initiated cancel is not an error worth surfacing as a failure.
-            if (_cliAbort?.signal?.aborted || e?.message === "AI request was cancelled.") {
+            if ((e instanceof AiApiError && e.cancelled) || _cliAbort?.signal?.aborted) {
                 store.addMessage("assistant", `⚠️ ${i18n.getMessage("aiCancelled") || "Cancelled."}`);
                 return "";
             }
@@ -504,6 +565,7 @@ export function useAiAssistant() {
             throw e;
         } finally {
             _cliAbort = null;
+            _cliAbortActive.value = false;
             store.setBusy(false);
         }
     }
@@ -555,6 +617,8 @@ export function useAiAssistant() {
             useHistory: false,
             temperature: 0,
             extraContext,
+            // Reasoning models in JSON mode routinely need more than the 60 s default.
+            timeoutMs: 180000,
             postProcess: (raw, tuneContext) => {
                 const obj = parseDiagnosis(raw);
                 // Drop empty / garbage findings early so the card stays useful.
@@ -650,14 +714,7 @@ export function useAiAssistant() {
 
     // Clean up streaming abort controllers when the host component unmounts
     onUnmounted(() => {
-        if (_abort) {
-            _abort.abort();
-            _abort = null;
-        }
-        if (_cliAbort) {
-            _cliAbort.abort();
-            _cliAbort = null;
-        }
+        cancelStreaming();
     });
 
     return {
@@ -687,6 +744,7 @@ export function useAiAssistant() {
         isConfigured,
         isEnabled: computed(() => store.enabled),
         isStreaming,
+        canCancel,
         // actions
         ask,
         cliAsk,
@@ -700,5 +758,6 @@ export function useAiAssistant() {
         recordAppliedChanges: (changes) => store.recordAppliedChanges(changes),
         popFailedExchange: () => store.popFailedExchange(),
         syncSettings: () => store.syncFromStorage(),
+        clearFcSnapshot: () => store.clearFcSnapshot(),
     };
 }

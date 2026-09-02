@@ -9857,7 +9857,7 @@
         "message": "未连接飞控。你仍可以询问通用调参问题，但无法获取实时调参数据。"
     },
     "aiRequestFailed": {
-        "message": "AI 请求失败"
+        "message": "AI 请求失败：{{message}}"
     },
     "aiErrorDisabled": {
         "message": "AI 助手已禁用。请在选项页面中启用。"
@@ -9942,6 +9942,102 @@
     },
     "aiCancelled": {
         "message": "已取消。"
+    },
+    "aiDiagnoseRevertFailed": {
+        "message": "回退失败",
+        "description": "Title of the dialog shown when reverting applied AI changes fails"
+    },
+    "aiDiagnoseApplyInterruptedTitle": {
+        "message": "应用被中断",
+        "description": "Title of the dialog shown when the connection drops mid-apply"
+    },
+    "aiDiagnoseApplyInterrupted": {
+        "message": "写入参数过程中连接中断，更改可能尚未保存——请重新连接并检查调参状态。",
+        "description": "Body of the dialog shown when the connection drops mid-apply"
+    },
+    "aiToolCallLimit": {
+        "message": "（已达到 AI 工具调用次数上限——请提出更具体的问题）",
+        "description": "Shown when the AI exhausts its CLI tool-call rounds"
+    },
+    "aiBusy": {
+        "message": "已有另一个 AI 请求正在进行。",
+        "description": "Guard message when a second AI request is attempted while one is running"
+    },
+    "aiCliTabActive": {
+        "message": "CLI 标签页已激活——请先关闭它再使用 AI CLI 辅助对话。",
+        "description": "Guard message when the classic CLI tab owns the serial connection"
+    },
+    "aiResponseTruncated": {
+        "message": "响应因服务商输出上限被截断。",
+        "description": "Appended when the model reply hits finish_reason=length"
+    },
+    "aiApplyInProgress": {
+        "message": "已有应用操作正在进行。",
+        "description": "Guard when apply/revert is called while another is running"
+    },
+    "aiRevertNoBackup": {
+        "message": "没有可用的备份。",
+        "description": "Revert attempted without a stored backup"
+    },
+    "aiRevertErrors": {
+        "message": "回退时出现 {{count}} 个错误。",
+        "description": "Revert finished but some CLI lines errored"
+    },
+    "aiRevertFailed": {
+        "message": "回退失败：{{message}}",
+        "description": "Revert threw an error"
+    },
+    "aiSeverityCritical": {
+        "message": "严重",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiSeverityWarning": {
+        "message": "警告",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiSeverityInfo": {
+        "message": "提示",
+        "description": "Diagnosis finding severity badge"
+    },
+    "aiRiskLow": {
+        "message": "低",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiRiskMedium": {
+        "message": "中",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiRiskHigh": {
+        "message": "高",
+        "description": "Overall diagnosis risk badge"
+    },
+    "aiAreaPID": {
+        "message": "PID",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaFilter": {
+        "message": "滤波",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaRate": {
+        "message": "杆量响应",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaRC": {
+        "message": "遥控",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaMotor": {
+        "message": "电机",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaFeature": {
+        "message": "功能",
+        "description": "Diagnosis finding area badge"
+    },
+    "aiAreaOther": {
+        "message": "其他",
+        "description": "Diagnosis finding area badge"
     },
     "aiShowApiKey": {
         "message": "显示 API 密钥"

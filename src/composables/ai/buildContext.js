@@ -392,10 +392,15 @@ export async function buildTuneContext({ includeFeatures = true, forceRefresh = 
     context._populated = looksPopulated(context);
     context._fetch = fetchResult;
 
-    // Cache without enabledFeatures — they're recaptured per call so cached
-    // snapshots always reflect the live feature flags.
-    _cachePayload = JSON.parse(JSON.stringify(context));
-    _cacheAt = Date.now();
+    // Cache only snapshots that actually contain data. A transient MSP failure (busy serial
+    // right after connect) yields an all-zeros context; caching it would make every follow-up
+    // turn within the TTL reason over zeros instead of retrying.
+    if (context._populated) {
+        // Cache without enabledFeatures — they're recaptured per call so cached
+        // snapshots always reflect the live feature flags.
+        _cachePayload = JSON.parse(JSON.stringify(context));
+        _cacheAt = Date.now();
+    }
 
     if (includeFeatures) {
         context.enabledFeatures = captureEnabledFeatures();

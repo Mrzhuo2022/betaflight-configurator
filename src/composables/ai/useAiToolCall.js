@@ -1,6 +1,7 @@
 import { AiApiError } from "@/js/AiApi";
 import { useMspCliSession, saveAndReconnect } from "@/composables/useMspCliSession";
 import { invalidateTuneCache } from "./buildContext";
+import { i18n } from "@/js/localization";
 
 /**
  * CLI tools available to the AI. OpenAI function-calling format.
@@ -132,7 +133,14 @@ export async function executeCliTool(functionName, argsStr, sink = {}) {
                 const lines = await cli.readDumpAll();
                 const txt = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
                 log(`[cli_diff] ${txt.length} chars`);
-                return txt.slice(0, 4000); // Truncate for token limits
+                // Truncate for token limits — but at a line boundary, so the model never
+                // reasons over a half-swallowed setting line at the cut point.
+                if (txt.length <= 4000) {
+                    return txt;
+                }
+                const cut = txt.lastIndexOf("\n", 4000);
+                const head = cut > 0 ? txt.slice(0, cut) : txt.slice(0, 4000);
+                return `${head}\n...[truncated ${txt.length - head.length} chars]`;
             }
             case "cli_get": {
                 const name = sanitizeCliName(args.name);
@@ -237,11 +245,14 @@ export async function chatWithTools(
 
         // After a successful cli_save the FC is rebooting and the serial link is gone —
         // withdraw all tools so the model must produce its final text answer this round.
+        // Same on the LAST round: tool results executed there could never be sent back, so
+        // the model would burn its final turn on calls it gets no answer for.
         // streamChat accumulates tool-call fragments and returns the same shape as chat(),
         // while onDelta/onReasoning surface answer/thinking tokens live in the UI.
+        const withdrawTools = sink.terminate || round === maxRounds - 1;
         const result = await api.streamChat(msgs, {
             ...opts,
-            ...(sink.terminate ? {} : { tools, tool_choice: "auto" }),
+            ...(withdrawTools ? {} : { tools, tool_choice: "auto" }),
             onDelta,
             onReasoning,
             signal,
@@ -297,5 +308,5 @@ export async function chatWithTools(
         return result.content || "";
     }
 
-    return "(AI tool call limit reached)";
+    return i18n.getMessage("aiToolCallLimit") || "(AI tool call limit reached — please ask a more specific question)";
 }
