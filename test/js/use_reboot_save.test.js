@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-// Tests for the arming-disable deadline in useReboot.saveToEeprom. setArmingEnabled rides
+// Tests for the arming-disable deadline in useReboot.saveToEeprom. disableArming rides
 // the legacy MSP path whose callback is silently dropped after its retry budget — without
 // the deadline race, a non-answering FC left every awaiting caller (AI apply, Motors,
 // Receiver, …) hung forever.
@@ -10,7 +10,7 @@ const FC = { CONFIG: { armingDisabled: false } };
 vi.mock("@/js/serial_backend", () => ({ reinitializeConnection: vi.fn() }));
 vi.mock("@/stores/navigation", () => ({ useNavigationStore: () => ({ cleanup: (cb) => cb() }) }));
 vi.mock("@/js/msp/MSPHelper", () => ({
-    mspHelper: { setArmingEnabled: vi.fn(), writeConfiguration: vi.fn() },
+    mspHelper: { disableArming: vi.fn() },
 }));
 vi.mock("@/js/msp", () => ({ default: { promise: vi.fn(async () => undefined) } }));
 vi.mock("@/js/msp/MSPCodes", () => ({ default: { MSP_EEPROM_WRITE: 250 } }));
@@ -36,21 +36,21 @@ describe("useReboot saveToEeprom arming-disable deadline", () => {
         FC.CONFIG.armingDisabled = true;
         const { saveToEeprom } = useReboot();
         await saveToEeprom();
-        expect(mspHelper.setArmingEnabled).not.toHaveBeenCalled();
+        expect(mspHelper.disableArming).not.toHaveBeenCalled();
         expect(MSP.promise).toHaveBeenCalledWith(250);
     });
 
-    it("resolves when setArmingEnabled acknowledges, then writes EEPROM in order", async () => {
-        mspHelper.setArmingEnabled.mockImplementation((_a, _b, cb) => cb());
+    it("resolves when disableArming acknowledges, then writes EEPROM in order", async () => {
+        mspHelper.disableArming.mockImplementation((cb) => cb());
         const { saveToEeprom } = useReboot();
         await saveToEeprom();
-        expect(mspHelper.setArmingEnabled).toHaveBeenCalled();
+        expect(mspHelper.disableArming).toHaveBeenCalled();
         expect(MSP.promise).toHaveBeenCalledWith(250);
     });
 
     it("rejects when the arming-disable callback never fires (legacy MSP timeout)", async () => {
         // Simulate a dead FC: request accepted, callback dropped.
-        mspHelper.setArmingEnabled.mockImplementation(() => {});
+        mspHelper.disableArming.mockImplementation(() => {});
         vi.useFakeTimers();
         const { saveToEeprom } = useReboot();
         const pending = saveToEeprom();

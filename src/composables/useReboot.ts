@@ -57,7 +57,7 @@ const ARMING_DISABLE_TIMEOUT_MS = 10000;
 async function saveToEeprom(): Promise<void> {
     // Never persist while arming is possible (matches writeConfiguration).
     if (!FC.CONFIG.armingDisabled) {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             const timer = setTimeout(
                 () => reject(new Error("arming-disable request timed out")),
                 ARMING_DISABLE_TIMEOUT_MS,

@@ -163,7 +163,7 @@ const isSidebarExpanded = computed(() => !sidebarNarrow.value || isRevealed.valu
 // Below that, fall back to the slide-over — it overlays instead of competing for width.
 const navigationStore = useNavigationStore();
 const aiAssistantStore = useAiAssistantStore();
-const aiRailContentRef = ref(null);
+const aiRailContentRef = ref<{ syncSettings?: () => void; scrollToBottom?: () => void } | null>(null);
 const aiRailFits = useMediaQuery("(min-width: 1024px)");
 const renderAiRailEmbedded = computed(
     () => aiAssistantStore.enabled && aiRailFits.value && navigationStore.aiAssistantPanelOpen,
@@ -178,7 +178,7 @@ const renderAiSlideover = computed(
 // disable text selection + native drag while active so the gesture stays clean.
 let railDragStartX = 0;
 let railDragStartWidth = 0;
-function onRailResizeMove(event) {
+function onRailResizeMove(event: MouseEvent) {
     const delta = railDragStartX - event.clientX;
     navigationStore.setAiRailWidthPx(railDragStartWidth + delta);
 }
@@ -187,7 +187,7 @@ function onRailResizeEnd() {
     document.removeEventListener("mousemove", onRailResizeMove);
     document.removeEventListener("mouseup", onRailResizeEnd);
 }
-function onRailResizeStart(event) {
+function onRailResizeStart(event: MouseEvent) {
     railDragStartX = event.clientX;
     railDragStartWidth = navigationStore.aiRailWidthPx;
     document.body.classList.add("ai-rail-resizing");
@@ -199,7 +199,7 @@ function onRailResizeReset() {
     navigationStore.setAiRailWidthPx(navigationStore.aiRailWidthPx === 480 ? 560 : 480);
 }
 // Keyboard support for the resize handle (WAI-ARIA separator pattern).
-function onRailResizeKeydown(event) {
+function onRailResizeKeydown(event: KeyboardEvent) {
     const step = 16;
     if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
         event.preventDefault();
