@@ -1217,13 +1217,15 @@ function closeSegment(segments, endIdx, axis) {
 }
 
 // ---------------------------------------------------------------------------
-// Regular (non-chirp) log parsing — extracts gyro + motor for PSD analysis
+// Regular (non-chirp) log parsing — extracts gyro + motor + debug for PSD analysis
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a regular (non-chirp) BBL log. Extracts gyroADC[0..2] and motor[0..7]
- * from every I/P frame, ignoring chirp mode state. Suitable for computing
- * power spectral density to identify noise and vibration frequencies.
+ * Parse a regular (non-chirp) BBL log. Extracts gyroADC[0..2], motor[0..7] and
+ * debug[0..3] from every I/P frame, ignoring chirp mode state. Suitable for
+ * computing power spectral density to identify noise and vibration frequencies.
+ * The debug channels' meaning depends on the log's `debug_mode` (also returned),
+ * so consumers must label them before interpreting.
  *
  * @param {Uint8Array} data  The full BBL file bytes.
  * @param {number} logStart  Byte offset from findLogBoundaries.
@@ -1249,6 +1251,8 @@ export function parseRegularLog(data, logStart, logEnd, _apiVersion) {
     ];
     const motorIdx = [0, 1, 2, 3].map((n) => resolveIdx(n, [`motor[${n}]`, `motor${n}`]));
     const motor0Idx = motorIdx[0];
+    const debugIdx = [0, 1, 2, 3].map((n) => resolveIdx(n, [`debug[${n}]`]));
+    const hasDebug = debugIdx.some((i) => i >= 0);
 
     if (gyroIdx.every((i) => i < 0)) {
         const names = Object.keys(fi)
@@ -1262,6 +1266,7 @@ export function parseRegularLog(data, logStart, logEnd, _apiVersion) {
     const hiResScale = sysConfig.blackbox_high_resolution ? 0.1 : 1;
     const rawGyro = [[], [], []];
     const rawMotor = [[], [], [], []];
+    const rawDebug = [[], [], [], []];
 
     const state = {
         current: new Int32Array(fieldCount),
@@ -1296,6 +1301,14 @@ export function parseRegularLog(data, logStart, logEnd, _apiVersion) {
                 const i = motorIdx[m];
                 if (i >= 0 && i < f.length) rawMotor[m].push(f[i]);
             }
+            // Skip entirely when the log carries no debug fields, so flightData.debug
+            // being empty is a reliable "not recorded" signal rather than four empty arrays.
+            if (hasDebug) {
+                for (let d = 0; d < 4; d++) {
+                    const i = debugIdx[d];
+                    if (i >= 0 && i < f.length) rawDebug[d].push(f[i]);
+                }
+            }
         },
     };
 
@@ -1316,6 +1329,13 @@ export function parseRegularLog(data, logStart, logEnd, _apiVersion) {
                 new Float32Array(rawMotor[2]),
                 new Float32Array(rawMotor[3]),
             ],
+            debug: [
+                new Float32Array(rawDebug[0]),
+                new Float32Array(rawDebug[1]),
+                new Float32Array(rawDebug[2]),
+                new Float32Array(rawDebug[3]),
+            ],
+            debugMode: sysConfig.debug_mode ?? -1,
             sampleCount: rawGyro[0].length,
             totalFrames: state.frameCount,
             corruptFrames: state.corruptFrameCount,

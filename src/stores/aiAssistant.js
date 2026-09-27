@@ -69,7 +69,8 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
 
     // --- blackbox digest (transient, single source of truth for the panel) ---
     // Holds the parsed frequency-domain summary so the UI can show the numbers the AI saw,
-    // not just a "loaded" badge. Cleared after diagnose consumes it (one-shot).
+    // not just a "loaded" badge. Deliberately kept after diagnose (a pilot often re-runs or
+    // follows up on the same log); cleared only on explicit clear / new upload.
     /** @type {import('vue').Ref<object|null>} */
     const lastBlackboxDigest = ref(null);
 
@@ -125,6 +126,15 @@ export const useAiAssistantStore = defineStore("aiAssistant", () => {
     (async () => {
         try {
             let stored = await loadHistoryFromDB();
+            if (stored === null) {
+                // The store could not be read (IndexedDB unavailable/blocked). Mark loading
+                // done but skip the initial overwrite save: saveHistory clears and re-adds,
+                // so writing the current (empty) session now would permanently wipe whatever
+                // history is still stored. Real user messages will save normally afterwards.
+                isHistoryLoaded.value = true;
+                if (saveAgain) scheduleSave();
+                return;
+            }
             // One-time migration from the old localStorage backend. Keep the old data until the
             // IndexedDB write succeeds, then remove it so migration is idempotent.
             const legacy = getConfig("ai_history", []).ai_history;

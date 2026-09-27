@@ -43,6 +43,7 @@ vi.mock("@/composables/ai/useAiAssistant", () => ({
         cancelStreaming: vi.fn(),
         resetConversation: vi.fn(),
         refreshFcSnapshot: vi.fn(async () => null),
+        invalidateTuneCache: vi.fn(),
         fetchModels: vi.fn(),
         clearFcSnapshot: vi.fn(),
         syncSettings: vi.fn(),

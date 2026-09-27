@@ -4,6 +4,7 @@
         side="right"
         :title="$t('tabAiAssistant')"
         :dismissible="true"
+        :unmount-on-hide="false"
         :ui="{ content: 'sm:max-w-xl w-full' }"
     >
         <template #body>

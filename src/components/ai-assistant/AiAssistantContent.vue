@@ -476,13 +476,14 @@ const {
     resetConversation,
     refreshFcSnapshot,
     clearFcSnapshot,
+    invalidateTuneCache,
     syncSettings,
     setBlackboxDigest,
     clearBlackboxDigest,
     recordAppliedChanges,
     popFailedExchange,
 } = useAiAssistant();
-const { isProcessing: isDigesting, error: digestError, digest, digestBlackboxData } = useBlackboxDigest();
+const { isProcessing: isDigesting, error: digestError, digest } = useBlackboxDigest();
 const { pulling: isPulling, progress: pullProgress, available: dataflashAvailable, pull } = useDataflashPull();
 const logStore = useLogStore(pinia);
 const dialog = useDialog();
@@ -758,7 +759,9 @@ async function onBblFileSelected(event) {
 
 async function onReadFromFC() {
     try {
-        const summary = await digestBlackboxData(await pull(), FC.CONFIG?.apiVersion);
+        // Route through the composable's digest() wrapper so isProcessing/digestError stay
+        // in sync (the raw digestBlackboxData call left error state stale on failure).
+        const summary = await digest(await pull(), FC.CONFIG?.apiVersion);
         if (summary) {
             setBlackboxDigest(summary);
             gui_log("Blackbox log loaded.");
@@ -816,8 +819,11 @@ watch(isConnected, (connected) => {
         refreshFcSnapshot().catch(() => {});
     } else {
         // Drop the stale snapshot: the FC terminal must not keep showing a green "Ready"
-        // badge for a board that is no longer plugged in.
+        // badge for a board that is no longer plugged in. The tune TTL cache must go too —
+        // otherwise a reconnect (possibly to a different board) within 30 s would serve the
+        // old session's snapshot as "current" values.
         clearFcSnapshot();
+        invalidateTuneCache();
     }
 });
 watch(lastFcSummary, () => {

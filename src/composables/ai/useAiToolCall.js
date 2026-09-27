@@ -278,26 +278,32 @@ export async function chatWithTools(
                 if (signal?.aborted) {
                     return "(cancelled)";
                 }
-                if (tc.type !== "function") continue;
                 const fnName = tc.function?.name;
                 const fnArgs = tc.function?.arguments || "{}";
-                // A cli_save earlier in this batch rebooted the FC: don't execute further
-                // tools, but every tool_call id still needs a result message for the API.
-                if (sink.terminate) {
-                    msgs.push({
-                        role: "tool",
-                        tool_call_id: tc.id,
-                        content: "skipped: FC is rebooting after save",
-                    });
-                    continue;
+                let content;
+                if (round === maxRounds - 1) {
+                    // Last round: the results can never be sent back (no further request),
+                    // so don't execute — in particular no user-confirmed cli_set/cli_save
+                    // whose effect the model would never see.
+                    content = "skipped: no rounds left to send tool results";
+                } else if (tc.type !== "function") {
+                    // Skipping without a result message would leave this tool_call
+                    // unanswered and make the next request a 400.
+                    content = "Error: unsupported tool call type";
+                } else if (sink.terminate) {
+                    // A cli_save earlier in this batch rebooted the FC: don't execute further
+                    // tools, but every tool_call id still needs a result message for the API.
+                    content = "skipped: FC is rebooting after save";
+                } else {
+                    // Report which tool is about to execute so the UI can show progress.
+                    onToolCall?.(fnName, fnArgs);
+                    const toolResult = await executeCliTool(fnName, fnArgs, sink);
+                    content = String(toolResult);
                 }
-                // Report which tool is about to execute so the UI can show progress.
-                onToolCall?.(fnName, fnArgs);
-                const toolResult = await executeCliTool(fnName, fnArgs, sink);
                 msgs.push({
                     role: "tool",
                     tool_call_id: tc.id,
-                    content: String(toolResult),
+                    content,
                 });
             }
             // Loop continues — AI gets tool results and responds

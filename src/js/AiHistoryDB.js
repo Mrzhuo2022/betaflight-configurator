@@ -27,6 +27,12 @@ function openDB() {
             }
         };
         request.onsuccess = () => resolve(request.result);
+        // Without this, a version upgrade blocked by another open tab leaves the promise
+        // pending forever — the panel would sit on "history loading" with no error.
+        request.onblocked = () => {
+            dbPromise = null; // Allow retry on next call
+            reject(new Error("IndexedDB open blocked by another tab."));
+        };
         request.onerror = () => {
             dbPromise = null; // Allow retry on next call
             reject(request.error);
@@ -62,12 +68,20 @@ function toPlainRecord(message) {
             content: message.content || "",
             suggestion: message.suggestion || null,
             reasoning: message.reasoning || "",
+            // Persisted so the retry affordance on a failed exchange survives an app restart.
+            isError: !!message.isError,
             ts: message.ts || Date.now(),
         }),
     );
 }
 
-/** Load the complete history, oldest first. */
+/**
+ * Load the complete history, oldest first.
+ *
+ * @returns {Promise<Array|null>} the stored messages, or null when the store could not be
+ *   read (unavailable/blocked IndexedDB). Null is deliberately distinct from an empty
+ *   array: callers must not treat a failed read as "no history" and overwrite the store.
+ */
 export async function loadHistory() {
     try {
         const db = await openDB();
@@ -77,7 +91,7 @@ export async function loadHistory() {
         return (Array.isArray(records) ? records : []).map(({ id: _id, ...message }) => message);
     } catch (error) {
         console.error("AI history load failed:", error);
-        return [];
+        return null;
     }
 }
 

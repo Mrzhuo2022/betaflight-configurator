@@ -8,6 +8,7 @@ import {
     hanningWindow,
 } from "@/js/blackbox/spectral_analysis";
 import { ComplexFFT } from "@/js/blackbox/fft";
+import { getDebugModes, getDebugFieldNames } from "@/js/utils/debugModes";
 import { gui_log } from "@/js/gui_log";
 
 const AXIS_NAMES = ["roll", "pitch", "yaw"];
@@ -21,9 +22,13 @@ function nextPow2(n) {
 function computeSampleRate(sysConfig) {
     const looptimeUs = sysConfig.looptime || 125;
     const pidDenom = sysConfig.pid_process_denom || 1;
-    // P-frame interval (not I-frame ratio) determines actual data rate
-    const pInterval = sysConfig.frameIntervalPNum || 1;
-    return 1e6 / (looptimeUs * pidDenom * pInterval);
+    // Logged rate = gyro rate × P-interval ratio, downsampled by the PID denom.
+    // Mirrors flightlog.js getBlackboxRate: the P interval is a Num/Denom ratio
+    // ("1/2" = half rate), NOT a divisor — dividing by PNum alone skewed every
+    // frequency in the digest by 2× for 1/2-style logs.
+    const pNum = sysConfig.frameIntervalPNum || 1;
+    const pDenom = sysConfig.frameIntervalPDenom || 1;
+    return ((1e6 / looptimeUs) * pNum) / pDenom / pidDenom;
 }
 
 /**
@@ -168,8 +173,33 @@ export async function digestBlackboxData(data, apiVersion) {
                 }
             }
 
+            // Debug-channel spectra (D_MAX actual D, RPM filter, …). Only emitted when the
+            // recorded debug_mode resolves to a known firmware name — otherwise the values
+            // are uninterpretable and would feed the model noise.
+            const debugModeName = getDebugModes(apiVersion)[flightData.debugMode] || null;
+            const debugChannels = [];
+            if (debugModeName) {
+                const debugLabels = getDebugFieldNames(apiVersion)[debugModeName] || {};
+                for (let d = 0; d < 4; d++) {
+                    const sig = flightData.debug?.[d];
+                    if (!sig || sig.length < 256) continue;
+                    try {
+                        const { peaks, noise_floor_db } = computePeaks(sig, sr);
+                        debugChannels.push({
+                            channel: d,
+                            label: debugLabels[`debug[${d}]`] || `debug[${d}]`,
+                            peaks,
+                            noise_floor_db,
+                            sample_count: sig.length,
+                        });
+                    } catch {
+                        // skip
+                    }
+                }
+            }
+
             if (Object.keys(axes).length > 0) {
-                return {
+                const summary = {
                     log_type: "regular",
                     sample_rate_hz: Math.round(sr),
                     looptime_us: sysConfig.looptime || 125,
@@ -178,6 +208,14 @@ export async function digestBlackboxData(data, apiVersion) {
                     total_frames: flightData.totalFrames,
                     corrupt_frames: flightData.corruptFrames,
                 };
+                if (debugModeName) {
+                    summary.debug_mode = flightData.debugMode;
+                    summary.debug_mode_name = debugModeName;
+                }
+                if (debugChannels.length > 0) {
+                    summary.debug_channels = debugChannels;
+                }
+                return summary;
             }
         } catch (e) {
             gui_log(`AI: blackbox regular parse failed: ${e.message || e}`);

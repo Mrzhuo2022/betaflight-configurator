@@ -4,7 +4,7 @@ import { useConnectionStore } from "@/stores/connection";
 import { useDialog } from "@/composables/useDialog";
 import { AiApi, AiApiError } from "@/js/AiApi";
 import { chatWithTools } from "./useAiToolCall";
-import { buildTuneContextPayload, TUNE_PATH_ROOTS } from "./buildContext";
+import { buildTuneContextPayload, invalidateTuneCache, TUNE_PATH_ROOTS } from "./buildContext";
 import { selectWikiDocs, formatWikiContext } from "./wikiSelector";
 import { i18n } from "@/js/localization";
 import { gui_log } from "@/js/gui_log";
@@ -187,6 +187,47 @@ export function formatAppliedChangeLog(batches) {
     return lines.join("\n");
 }
 
+/**
+ * Render a blackbox digest as the primary-evidence context block for the model.
+ * Shared by diagnose() and every chat path (runChat / cliAsk) so a loaded log
+ * reaches the model no matter which entry point the pilot uses. Previously only
+ * the one-click diagnose button attached it, and chat turns claimed "no blackbox
+ * data" despite the panel showing the digest as loaded. Exported for unit testing.
+ *
+ * @param {object} [digest]  frequency-domain summary from digestBlackbox
+ * @returns {string}  "" when there is no usable digest
+ */
+export function formatBlackboxContext(digest) {
+    if (!digest || !digest.log_type) {
+        return "";
+    }
+    const json = JSON.stringify(digest, null, 2);
+    if (digest.log_type === "chirp") {
+        return [
+            "Blackbox CHIRP / autotune analysis — USE THIS AS YOUR PRIMARY DATA SOURCE:",
+            "```json",
+            json,
+            "```",
+            "For each axis, inspect bandwidth_hz, phase_margin_deg, resonant_peak_db, sensitivity_peak_db, overshoot_pct, rise_time_ms, settling_time_ms.",
+            "Typical concerns: phase_margin_deg < 30, resonant_peak_db > 6, overshoot_pct > 30, very low bandwidth.",
+            "Only recommend PID/filter changes that are supported by these measurements.",
+        ].join("\n");
+    }
+    return [
+        "Blackbox regular flight-log analysis — USE THIS AS YOUR PRIMARY DATA SOURCE:",
+        "```json",
+        json,
+        "```",
+        "Analyze axes.*.noise_peaks (freq_hz, power_db) against noise_floor_db.",
+        "Treat a peak as significant only when power_db - noise_floor_db > 10.",
+        "Motor noise peaks may indicate prop/motor imbalance or insufficient RPM filtering.",
+        "If debug_channels is present, read each channel via its label / debug_mode_name",
+        "(e.g. D_MAX debug[2]/debug[3] are actual D roll/pitch — flat traces that never rise mean dynamic D is inactive).",
+        "If debug_mode_name is absent or NONE, ignore any debug data — the log was not recorded with a meaningful debug mode.",
+        "Only recommend filter/PID changes supported by these peaks.",
+    ].join("\n");
+}
+
 export function useAiAssistant() {
     const store = useAiAssistantStore();
     const connectionStore = useConnectionStore();
@@ -274,6 +315,10 @@ export function useAiAssistant() {
         store.clearStreamingContent();
 
         try {
+            // Create the abort controller up front so the Stop button is active during the
+            // MSP snapshot fetch + wiki selection, not just during the API call itself.
+            _abort = new AbortController();
+            _abortActive.value = true;
             // Readable summary first, full JSON second. Models reason better over the summary
             // and use JSON only for exact values/paths. Use the TTL cache for follow-up
             // messages to avoid 10 MSP round-trips on every single chat turn.
@@ -308,15 +353,18 @@ export function useAiAssistant() {
             }
 
             let contextNote = "";
-            if (extraContext) {
-                // Blackbox / external evidence first so the model treats it as primary.
-                contextNote = extraContext;
+            // Chat turns pick up the loaded blackbox digest automatically; an explicit
+            // extraContext (diagnose) takes precedence. Evidence stays ahead of the FC tune
+            // so the model treats it as primary.
+            const blackboxContext = extraContext || formatBlackboxContext(store.lastBlackboxDigest);
+            if (blackboxContext) {
+                contextNote = blackboxContext;
             }
             if (tunePayload) {
                 contextNote +=
                     `\n\n## Current flight-controller tune (readable summary)\n${tunePayload.text}` +
                     `\n\n## Current flight-controller tune (JSON, for exact values/paths)\n\`\`\`json\n${tunePayload.json}\n\`\`\``;
-            } else if (!extraContext) {
+            } else if (!blackboxContext) {
                 contextNote =
                     "No flight controller is currently connected and no blackbox data is available. Cannot perform diagnostic.";
             }
@@ -331,8 +379,20 @@ export function useAiAssistant() {
             // Selectively inject relevant Betaflight wiki docs based on keyword matching
             // against the user's question + FC context. Keeps token cost low while giving
             // the model authoritative, version-specific knowledge for the specific topic.
+            const digest = store.lastBlackboxDigest;
+            const blackboxHint =
+                digest?.log_type &&
+                [
+                    "blackbox",
+                    digest.log_type,
+                    digest.debug_mode_name,
+                    ...Object.keys(digest.axes || {}),
+                    ...Object.keys(digest.axes || {}).map((a) => `${a} noise`),
+                ]
+                    .filter(Boolean)
+                    .join(" ");
             const wikiHaystack = `${userText}\n${tunePayload?.text || ""}`;
-            const wikiDocs = await selectWikiDocs(wikiHaystack);
+            const wikiDocs = await selectWikiDocs(wikiHaystack, blackboxHint || "");
             if (wikiDocs.length > 0) {
                 const wikiText = formatWikiContext(wikiDocs);
                 contextNote += `\n\n${wikiText}`;
@@ -345,10 +405,12 @@ export function useAiAssistant() {
                 // Carry only role+content of prior turns to avoid leaking suggestion objects.
                 ...(useHistory
                     ? store.messages
-                        .filter((m) => m.role === "user" || m.role === "assistant")
-                        .slice(-10)
-                        .map((m) => ({ role: m.role, content: m.content }))
-                    : []),
+                          .filter((m) => m.role === "user" || m.role === "assistant")
+                          .slice(-10)
+                          .map((m) => ({ role: m.role, content: m.content }))
+                    : // Diagnose excludes history but must still send the request itself as a
+                      // user turn — system-only payloads are rejected by some providers.
+                      [{ role: "user", content: userText }]),
                 { role: "system", content: contextNote },
             ];
 
@@ -362,12 +424,10 @@ export function useAiAssistant() {
 
             let reply = "";
             let reasoning = "";
-            // Always stream when possible so the pilot sees answer tokens AND chain-of-thought
-            // tokens live. postProcess (diagnose JSON parse) still runs on the final text.
-            // Fallback to non-stream only if stream is explicitly disabled.
-            if (stream !== false) {
-                _abort = new AbortController();
-                _abortActive.value = true;
+            let finishReason = null;
+            // Streaming path (ask): the pilot sees answer AND chain-of-thought tokens live.
+            // Diagnose runs non-streaming so postProcess parses the complete JSON at once.
+            if (stream) {
                 const streamed = await api.streamChat(payload, {
                     ...baseOpts,
                     signal: _abort.signal,
@@ -386,25 +446,25 @@ export function useAiAssistant() {
                 if (typeof streamed === "object" && streamed?.reasoning) {
                     reasoning = streamed.reasoning;
                 }
+                if (typeof streamed === "object") {
+                    finishReason = streamed.finishReason ?? null;
+                }
             } else {
                 const chatOpts = { ...baseOpts };
                 if (responseFormat) {
                     chatOpts.responseFormat = responseFormat;
                 }
-                // Create an abort controller even for non-streaming requests so Stop works
-                // for diagnose too (previously only streaming chat was cancellable).
-                _abort = new AbortController();
-                _abortActive.value = true;
                 chatOpts.signal = _abort.signal;
                 const result = await api.chat(payload, chatOpts);
                 reply = result?.content || "";
                 reasoning = result?.reasoning || "";
-                // A provider that hit its output budget returns truncated content with a
-                // normal 2xx response — flag it, or a failed diagnose JSON parse is
-                // indistinguishable from a model mistake.
-                if (result?.finishReason === "length" && reply) {
-                    reply += `\n\n⚠️ ${i18n.getMessage("aiResponseTruncated") || "Response was truncated by the provider's output limit."}`;
-                }
+                finishReason = result?.finishReason ?? null;
+            }
+            // A provider that hit its output budget returns truncated content with a
+            // normal 2xx response — flag it, or a failed diagnose JSON parse is
+            // indistinguishable from a model mistake. Both request paths return finishReason.
+            if (finishReason === "length" && reply) {
+                reply += `\n\n⚠️ ${i18n.getMessage("aiResponseTruncated") || "Response was truncated by the provider's output limit."}`;
             }
 
             store.clearStreamingContent();
@@ -417,6 +477,11 @@ export function useAiAssistant() {
             // may find the partial analysis useful rather than losing it entirely.
             const partial = store.streamingContent || "";
             store.clearStreamingContent();
+            // A failure before the snapshot resolved would otherwise leave the FC terminal
+            // badge stuck on "Loading…" with the refresh button disabled.
+            if (store.fcFetchStatus === "loading") {
+                store.setFcFetchStatus("error", e?.message || String(e));
+            }
             // A deliberate user cancel is not a failure: acknowledge it like cliAsk does,
             // instead of persisting a retryable error bubble and popping an error dialog.
             if (e instanceof AiApiError && e.cancelled) {
@@ -475,6 +540,9 @@ export function useAiAssistant() {
             );
         }
 
+        // Re-check after the await above: two entries in the same tick would both pass the
+        // first guard and interleave their tool loops on the shared busy/streaming state.
+        assertNotBusy();
         store.addMessage("user", trimmed);
         store.setBusy(true);
         store.setError("");
@@ -484,10 +552,13 @@ export function useAiAssistant() {
         _cliAbortActive.value = true;
         try {
             const api = makeApi(store);
+            // The digest cannot be re-fetched via CLI tools, so inject it into the system
+            // prompt when loaded (ask()/diagnose() receive it via runChat's contextNote).
+            const blackboxContext = formatBlackboxContext(store.lastBlackboxDigest);
             const systemPrompt =
                 `${SYSTEM_PROMPT}\n\n你可以使用 cli_diff、cli_get、cli_status 工具来读取飞控参数。遇到不确定的问题时先用工具获取数据再回答。` +
                 `\n你还可以在用户明确要求修改参数时使用 cli_set 修改参数（每次修改用户都会确认），全部修改完成后用 cli_save 保存并重启。` +
-                `未经用户要求不要主动修改参数。`;
+                `未经用户要求不要主动修改参数。${blackboxContext ? `\n\n${blackboxContext}` : ""}`;
             const messages = [
                 { role: "system", content: systemPrompt },
                 ...store.messages
@@ -545,8 +616,11 @@ export function useAiAssistant() {
                 store.addMessage("assistant", `⚠️ ${i18n.getMessage("aiCancelled") || "Cancelled."}`);
                 return "";
             }
+            // Persist the final round's chain-of-thought so the thinking panel the user just
+            // watched doesn't vanish when the message finalizes (matches ask()'s behavior).
+            const finalReasoning = store.streamingReasoning || "";
             store.clearStreamingContent();
-            store.addMessage("assistant", reply);
+            store.addMessage("assistant", reply, null, finalReasoning);
             return reply;
         } catch (e) {
             // Preserve partial streamed content — same rationale as the runChat error path.
@@ -578,34 +652,16 @@ export function useAiAssistant() {
      * @param {object} [blackboxDigest]  optional frequency-domain summary from digestBlackbox
      */
     async function diagnose(blackboxDigest) {
-        let extraContext = "";
+        const extraContext = formatBlackboxContext(blackboxDigest);
         let userLabel = i18n.getMessage("aiDiagnoseTrigger") || "Run a one-click diagnostic on my tune.";
         const snapshot = { blackbox: null, tuneConnected: false };
         if (blackboxDigest) {
             const axes = Object.keys(blackboxDigest.axes || {});
-            snapshot.blackbox = { log_type: blackboxDigest.log_type, axes };
-            if (blackboxDigest.log_type === "chirp") {
-                extraContext = [
-                    "Blackbox CHIRP / autotune analysis — USE THIS AS YOUR PRIMARY DATA SOURCE:",
-                    "```json",
-                    JSON.stringify(blackboxDigest, null, 2),
-                    "```",
-                    "For each axis, inspect bandwidth_hz, phase_margin_deg, resonant_peak_db, sensitivity_peak_db, overshoot_pct, rise_time_ms, settling_time_ms.",
-                    "Typical concerns: phase_margin_deg < 30, resonant_peak_db > 6, overshoot_pct > 30, very low bandwidth.",
-                    "Only recommend PID/filter changes that are supported by these measurements.",
-                ].join("\n");
-            } else {
-                extraContext = [
-                    "Blackbox regular flight-log analysis — USE THIS AS YOUR PRIMARY DATA SOURCE:",
-                    "```json",
-                    JSON.stringify(blackboxDigest, null, 2),
-                    "```",
-                    "Analyze axes.*.noise_peaks (freq_hz, power_db) against noise_floor_db.",
-                    "Treat a peak as significant only when power_db - noise_floor_db > 10.",
-                    "Motor noise peaks may indicate prop/motor imbalance or insufficient RPM filtering.",
-                    "Only recommend filter/PID changes supported by these peaks.",
-                ].join("\n");
-            }
+            snapshot.blackbox = {
+                log_type: blackboxDigest.log_type,
+                axes,
+                debug_mode_name: blackboxDigest.debug_mode_name || null,
+            };
             userLabel += ` [Blackbox: ${blackboxDigest.log_type}, axes=${axes.join(",")}]`;
             gui_log(`AI: diagnose with blackbox (type=${blackboxDigest.log_type}, axes=${axes.join(",")})`);
         } else {
@@ -755,6 +811,7 @@ export function useAiAssistant() {
         fetchModels,
         setBlackboxDigest: (d) => store.setBlackboxDigest(d),
         clearBlackboxDigest: () => store.clearBlackboxDigest(),
+        invalidateTuneCache: () => invalidateTuneCache(),
         recordAppliedChanges: (changes) => store.recordAppliedChanges(changes),
         popFailedExchange: () => store.popFailedExchange(),
         syncSettings: () => store.syncFromStorage(),

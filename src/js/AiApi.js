@@ -156,7 +156,7 @@ export class AiApi {
             signal,
         });
 
-        const data = await this._safeJson(res);
+        const data = await this._safeJson(res, signal);
         const msg = data?.choices?.[0]?.message;
         // DeepSeek / Qwen / some proxies put the chain-of-thought on the message as
         // reasoning_content (or reasoning). Surface it so the UI can render it above the answer.
@@ -420,10 +420,16 @@ export class AiApi {
         }
     }
 
-    async _safeJson(res) {
+    async _safeJson(res, signal) {
         try {
             return await res.json();
-        } catch {
+        } catch (e) {
+            // A user cancel landing while the body is being read surfaces here as a JSON
+            // parse failure — the hard timeout can't reach this point (its timer is cleared
+            // once _fetch resolves), so an abort at this stage is always a cancel.
+            if (signal?.aborted || e?.name === "AbortError") {
+                throw new AiApiError("AI request was cancelled.", { cancelled: true });
+            }
             throw new AiApiError("AI service returned a non-JSON response.", { status: res.status });
         }
     }
