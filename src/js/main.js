@@ -1,11 +1,11 @@
 import "../components/init.js";
-import { gui_log } from "./gui_log.js";
+import { gui_log } from "./gui_log";
 import { i18n } from "./localization.js";
 import GUI from "./gui.js";
-import { get as getConfig, set as setConfig } from "./ConfigStorage.js";
+import { get as getConfig, set as setConfig } from "./ConfigStorage";
 import { checkSetupAnalytics } from "./Analytics.js";
 import { initializeSerialBackend } from "./serial_backend.js";
-import CONFIGURATOR from "./data_storage.js";
+import CONFIGURATOR from "./data_storage";
 import CliAutoComplete from "./CliAutoComplete.js";
 import DarkTheme, { setDarkTheme } from "./DarkTheme.js";
 import { loadUiScale } from "./UiScale.js";
@@ -17,9 +17,19 @@ import { Capacitor } from "@capacitor/core";
 import loginManager from "./LoginManager.js";
 import { enableDevelopmentOptions } from "./utils/developmentOptions.js";
 import { loadDeviceFilters } from "./protocols/devices.js";
+import {
+    checkBluetoothSupport,
+    checkSerialSupport,
+    checkUsbSupport,
+    isAndroid,
+    isNetworkOnlyBrowser,
+    isTauriAndroid,
+    isTauriIOS,
+} from "./utils/checkCompatibility.js";
 import { pinia } from "./pinia_instance.js";
 import { useNavigationStore } from "../stores/navigation.js";
-import { MspCancelledError } from "./msp/mspErrors.js";
+import { useDialogStore } from "../stores/dialog.js";
+import { MspCancelledError } from "./msp/mspErrors";
 
 window.addEventListener("unhandledrejection", (event) => {
     if (event.reason instanceof MspCancelledError) {
@@ -77,6 +87,60 @@ function cleanupLocalStorage() {
     setConfig({ erase_chip: true }); // force erase chip on first run
 }
 
+// Open OptionsDialog on first launch so new users can set language / theme
+function openFirstRunOptions() {
+    const firstRunCfg = getConfig("firstRun") ?? {};
+    if (firstRunCfg.firstRun !== undefined) {
+        return;
+    }
+
+    setConfig({ firstRun: true });
+    setTimeout(() => {
+        useNavigationStore(pinia).optionsDialogOpen = true;
+    }, 100);
+}
+
+/**
+ * Tell the user once that their browser can only reach a flight controller over the
+ * network, naming the APIs it is missing. Acknowledging it runs `next`, so the
+ * first-run options dialog does not stack on top of this one.
+ *
+ * @param {function} next - called once the notice is dismissed, or immediately when
+ * there is nothing to say.
+ */
+function showNetworkOnlyNotice(next) {
+    if (!isNetworkOnlyBrowser() || getConfig("networkOnlyNoticeShown").networkOnlyNoticeShown) {
+        next();
+        return;
+    }
+
+    const missing = [
+        [checkSerialSupport(), "networkOnlyBrowserNoSerial"],
+        [checkBluetoothSupport(), "networkOnlyBrowserNoBluetooth"],
+        [checkUsbSupport(), "networkOnlyBrowserNoUsb"],
+    ]
+        .filter(([supported]) => !supported)
+        .map(([, key]) => `<li>${i18n.getMessage(key)}</li>`)
+        .join("");
+
+    const dialogStore = useDialogStore(pinia);
+    dialogStore.open(
+        "InformationDialog",
+        {
+            title: i18n.getMessage("networkOnlyBrowserTitle"),
+            text: `${i18n.getMessage("networkOnlyBrowserText")}<ul>${missing}</ul>`,
+            confirmText: i18n.getMessage("OK"),
+        },
+        {
+            confirm: () => {
+                setConfig({ networkOnlyNoticeShown: true });
+                dialogStore.close();
+                next();
+            },
+        },
+    );
+}
+
 function appReady() {
     readConfiguratorVersionMetadata();
 
@@ -102,14 +166,7 @@ function appReady() {
 
         initializeSerialBackend();
 
-        // Open OptionsDialog on first launch so new users can set language / theme
-        const firstRunCfg = getConfig("firstRun") ?? {};
-        if (firstRunCfg.firstRun === undefined) {
-            setConfig({ firstRun: true });
-            setTimeout(() => {
-                useNavigationStore(pinia).optionsDialogOpen = true;
-            }, 100);
-        }
+        showNetworkOnlyNotice(openFirstRunOptions);
     });
 
     const showNotifications = getConfig("showNotifications", false).showNotifications;
@@ -181,6 +238,22 @@ async function startProcess() {
 
     // Kick off initial tab — sidebar handles subsequent clicks reactively.
     switchTab("landing", { mode: "disconnected" });
+
+    // The phone/tablet shell only. A narrow desktop or browser window is still the desktop
+    // experience, so width alone must not opt anything in here.
+    document.body.classList.toggle("mobile-app-shell", isTauriIOS() || isTauriAndroid() || isAndroid());
+
+    // The on-screen keyboard leaves no room for the tab strip in the floating bar. Track focus
+    // rather than viewport height: the layout viewport shrinks with the keyboard, so measuring
+    // it cannot tell the two apart.
+    document.addEventListener("focusin", (event) => {
+        if (event.target?.matches?.("input, textarea, [contenteditable]")) {
+            document.body.classList.add("keyboard-visible");
+        }
+    });
+    document.addEventListener("focusout", () => {
+        document.body.classList.remove("keyboard-visible");
+    });
 
     const compactHeaderLayoutMediaQuery = window.matchMedia(
         "(max-width: 575px), (max-width: 950px) and (max-height: 500px) and (orientation: landscape)",

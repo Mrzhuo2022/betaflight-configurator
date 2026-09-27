@@ -114,7 +114,11 @@ The next versions of the App will be a modern tool that based on PWA (Progressiv
 
 ### Prepare your environment
 
-1. Install [node.js](https://nodejs.org/) (refer to [.nvmrc](./.nvmrc) for minimum required version)
+1. Install [node.js](https://nodejs.org/) — use the exact version in [.nvmrc](./.nvmrc)
+   (`nvm use` if you have [nvm](https://github.com/nvm-sh/nvm)). The bundled npm must be
+   11.6.1 or newer: npm 11.6.0 and older write `package-lock.json` in a different shape, so
+   an older npm makes every commit rewrite the whole lockfile. `npm install` warns with
+   `EBADENGINE` if your toolchain is too old, and CI fails the *Lockfile in sync* check.
 
 ### PWA version
 
@@ -124,6 +128,13 @@ The next versions of the App will be a modern tool that based on PWA (Progressiv
 2. Run `npm run dev`.
 
 The web app will be available at http://localhost:8080 with full HMR.
+
+On the **Modes** tab, use the search field above the list to filter mode names as you
+type. Search starts at two characters, matches any part of the displayed name, and
+ignores case and surrounding whitespace. Results keep the existing mode order and
+respect **Hide unused modes**. Clear the field or reduce it to one character to
+remove the text filter; mode ranges and links are preserved while hidden.
+The no-matches message appears only after mode data has loaded successfully.
 
 #### Run production version
 

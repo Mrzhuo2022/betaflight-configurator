@@ -5,7 +5,7 @@ import { API_VERSION_1_49 } from "../js/data_storage";
 import { FlightLogFieldPresenter } from "./flightlog_fields_presenter";
 import { RATES_TYPE } from "./flightlog_fielddefs";
 import { escapeRegExp } from "./tools";
-import { getDebugModes } from "../js/utils/debugModes";
+import { debugContextFromSysConfig, getDebugFieldAxis } from "../js/utils/debugModes";
 
 export function GraphConfig(graphConfig) {
     const listeners = [];
@@ -54,7 +54,6 @@ export function GraphConfig(graphConfig) {
         const fields = [];
         const setupColor = field?.color === -1;
         const sysConfig = flightLog.getSysConfig();
-        const apiVersion = sysConfig.apiVersion;
         if (matches) {
             const nameRoot = matches[1],
                 nameRegex = new RegExp(String.raw`^${escapeRegExp(nameRoot)}\[[0-9]+\]$`);
@@ -74,8 +73,7 @@ export function GraphConfig(graphConfig) {
                                 name: fieldName,
                                 friendlyName: FlightLogFieldPresenter.fieldNameToFriendly(
                                     fieldName,
-                                    sysConfig.debug_mode,
-                                    apiVersion,
+                                    debugContextFromSysConfig(sysConfig),
                                 ),
                             },
                             forceNewCurve,
@@ -92,8 +90,7 @@ export function GraphConfig(graphConfig) {
                         curve: { ...field.curve },
                         friendlyName: FlightLogFieldPresenter.fieldNameToFriendly(
                             field.name,
-                            sysConfig.debug_mode,
-                            apiVersion,
+                            debugContextFromSysConfig(sysConfig),
                         ),
                     }),
                 );
@@ -238,6 +235,14 @@ const gatedByApi149 = function (fromApi149, beforeApi149 = {}) {
 
 const GYRO_SCALED_CURVE = { default: (curves) => curves.gyro() };
 
+// Firmware before 1.47 called this slot D_MIN, so a log reports one name or the other.
+const D_MAX_CURVE = {
+    0: (curves) => curves.combined("debug[0]", "debug[1]"), // roll gyro factor
+    1: (curves) => curves.combined("debug[0]", "debug[1]"), // roll setpoint factor
+    2: (curves) => curves.combined("debug[2]", "debug[3]"), // roll actual D
+    3: (curves) => curves.combined("debug[2]", "debug[3]"), // pitch actual D
+};
+
 const RPM_CURVE = { default: (curves) => curves.combined("debug[0]", "debug[1]", "debug[2]", "debug[3]") };
 
 const FEEDFORWARD_LIMIT_CURVE = {
@@ -338,12 +343,8 @@ const DEBUG_MODE_CURVES = {
     ESC_SENSOR_RPM: RPM_CURVE,
     DSHOT_RPM_TELEMETRY: RPM_CURVE,
     RPM_FILTER: RPM_CURVE,
-    D_MAX: {
-        0: (curves) => curves.combined("debug[0]", "debug[1]"), // roll gyro factor
-        1: (curves) => curves.combined("debug[0]", "debug[1]"), // roll setpoint factor
-        2: (curves) => curves.combined("debug[2]", "debug[3]"), // roll actual D
-        3: (curves) => curves.combined("debug[2]", "debug[3]"), // pitch actual D
-    },
+    D_MIN: D_MAX_CURVE,
+    D_MAX: D_MAX_CURVE,
     ITERM_RELAX: {
         2: (curves) => curves.zeroCentred(), // roll I relaxed error
         3: (curves) => curves.zeroCentred(), // roll absolute control axis error, unused from 2026.6
@@ -607,6 +608,12 @@ GraphConfig.getDefaultCurveForField = function (flightLog, fieldName) {
         }
     };
 
+    // The accelerometer's own full scale, so an accADC axis follows the craft's
+    // configuration the way a gyro axis does.
+    const maxAccelerometerG = function () {
+        return Math.abs(flightLog.accRawToGs(32767));
+    };
+
     const getMinMaxForFields = function (...fieldNames) {
         // helper to make a curve scale based on the combined min/max of one or more fields
         let min = Number.MAX_VALUE,
@@ -628,10 +635,14 @@ GraphConfig.getDefaultCurveForField = function (flightLog, fieldName) {
     const getCurveForMinMaxFields = function (...fieldNames) {
         const mm = getMinMaxForFields(...fieldNames);
         // added convertation min max values from log file units to friendly chart
-        const mmChartUnits = {
-            min: FlightLogFieldPresenter.ConvertFieldValue(flightLog, fieldName, true, mm.min),
-            max: FlightLogFieldPresenter.ConvertFieldValue(flightLog, fieldName, true, mm.max),
-        };
+        const converted = [
+            FlightLogFieldPresenter.ConvertFieldValue(flightLog, fieldName, true, mm.min),
+            FlightLogFieldPresenter.ConvertFieldValue(flightLog, fieldName, true, mm.max),
+        ];
+        // A field whose unit stores the magnitude of a negative quantity - a CRSF
+        // RSSI in -1 dBm - converts the smaller sample to the larger display value,
+        // so order the pair by what is displayed rather than by what was stored.
+        const mmChartUnits = { min: Math.min(...converted), max: Math.max(...converted) };
         return {
             power: 1,
             MinMax: mmChartUnits,
@@ -795,10 +806,58 @@ GraphConfig.getDefaultCurveForField = function (flightLog, fieldName) {
                     max: 90,
                 },
             };
+        } else if (fieldName === "pitot[0]") {
+            return {
+                power: 1,
+                MinMax: {
+                    min: 0,
+                    max: 100,
+                },
+            };
+        } else if (fieldName === "pitot[1]") {
+            return {
+                power: 1,
+                MinMax: {
+                    min: 0,
+                    max: 1000,
+                },
+            };
         } else if (fieldName.match(/^debug.*/) && sysConfig.debug_mode != null) {
-            const curve = debugModeCurve(getDebugModes(sysConfig.apiVersion)[sysConfig.debug_mode]);
+            const debugContext = debugContextFromSysConfig(sysConfig);
+            const debugModeName = debugContext.modeName;
+
+            // Firmware annotates what each debug field holds - in the log's own
+            // header where it has the flash for it, otherwise through the generated
+            // table - so the axis follows from the field's own shape and
+            // DEBUG_MODE_CURVES is never consulted. That table remains for logs
+            // recorded before the annotations.
+            const axis = getDebugFieldAxis(fieldName, debugContext);
+
+            // A bounded unit or a device-native one fixes the axis outright, and the
+            // firmware is a better authority on that than any table here.
+            if (axis?.range) {
+                return minMaxPower1(axis.range.min, axis.range.max);
+            }
+            if (axis?.dynamic === "gyro") {
+                return curves.gyro();
+            }
+            if (axis?.dynamic === "acc") {
+                return minMaxPower1(-maxAccelerometerG(), maxAccelerometerG());
+            }
+
+            // An unbounded unit says only which fields share an axis, not how wide it
+            // should be, so a curated range still wins where somebody wrote one.
+            const curve = debugModeCurve(debugModeName);
             if (curve) {
                 return curve;
+            }
+
+            if (axis) {
+                // The group names every field firmware writes in that unit, but a
+                // log only holds the fields it was configured to record; asking for
+                // an absent one yields the generic fallback range.
+                const logged = axis.fit.filter((name) => flightLog.getMainFieldIndexByName?.(name) !== undefined);
+                return getCurveForMinMaxFields(...(logged.length > 0 ? logged : [fieldName]));
             }
         }
 

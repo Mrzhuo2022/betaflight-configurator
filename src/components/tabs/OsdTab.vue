@@ -244,7 +244,7 @@
 
                         <!-- Video Format (MAX7456 only) -->
                         <UiBox
-                            v-if="osdStore.state.haveMax7456Configured || osdStore.state.isMspDevice"
+                            v-if="osdStore.state.haveMax7456Configured || osdStore.state.haveFbOsdConfigured || osdStore.state.isMspDevice"
                             :title="$t('osdSetupVideoFormatTitle')"
                             type="neutral"
                             collapsible
@@ -493,7 +493,11 @@
                 >
                     <template #body>
                         <h1 class="text-lg font-bold mb-1">{{ $t("osdSetupFontPresets") }}</h1>
-                        <div class="flex flex-wrap gap-0 my-3" ref="fontPreviewContainer">
+                        <div
+                            class="flex flex-wrap gap-0 my-3"
+                            :class="{ 'bg-neutral-500': isSmallFontLoaded }"
+                            ref="fontPreviewContainer"
+                        >
                             <img
                                 v-for="(url, charIdx) in fontCharacterUrls"
                                 :key="charIdx"
@@ -509,6 +513,7 @@
                                 v-model="selectedFontPreset"
                                 :items="fontPresetSelectItems"
                                 :portal="false"
+                                :ui="{ content: 'z-10' }"
                                 size="xs"
                                 class="min-w-40"
                             />
@@ -576,7 +581,7 @@
                     {{ $t("osdSetupFontManagerTitle") }}
                 </UButton>
                 <UFieldGroup size="xs" orientation="horizontal" class="flex!">
-                    <UButton @click="saveConfig()" :disabled="!portsOrConfigDirty || isSaving" size="xs">
+                    <UButton @click="savePrimaryAction()" :disabled="!portsOrConfigDirty || isSaving" size="xs">
                         {{ saveButtonText }}
                     </UButton>
                     <UDropdownMenu v-slot="{ open }" :items="saveMenuItems" :content="{ align: 'end', side: 'top' }">
@@ -596,6 +601,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { useOsdStore } from "@/stores/osd";
+import { useFlightControllerStore } from "@/stores/fc";
 import { useOsdPreview, clampStringPreviewPosition, clampArrayPreviewPosition } from "@/composables/useOsdPreview";
 import { useOsdRuler } from "@/composables/useOsdRuler";
 import { useBuildOptions } from "@/composables/useBuildOptions";
@@ -603,6 +609,7 @@ import { useTransientLabel } from "@/composables/useTransientLabel";
 import { useSaving } from "@/composables/useSaving";
 import { useReboot } from "@/composables/useReboot";
 import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
 import { PORT_NONE } from "@/composables/ports/portNames";
 import { runTabLoad } from "@/composables/useTabLoad";
 
@@ -615,13 +622,14 @@ const {
     options: osdPortOptions,
     selectedIdentifier: osdPortIdentifier,
     changed: osdPortChanged,
+    conflict: osdPortConflict,
+    selection: osdPortSelection,
     load: loadOsdPort,
     write: writeOsdPort,
     selectedProtocol: osdProtocol,
     protocolOptions: osdProtocolOptions,
 } = useFeaturePort({
     setting: "osd_uart",
-    functionName: "FRSKY_OSD",
     protocol: { setting: "osd_displayport_device" },
 });
 
@@ -633,18 +641,28 @@ const {
     baudOptions: customTextBaudOptions,
     selectedBaud: customTextBaud,
     changed: customTextPortChanged,
+    conflict: customTextPortConflict,
+    selection: customTextPortSelection,
     load: loadCustomTextPort,
     write: writeCustomTextPort,
 } = useFeaturePort({
     setting: "osd_custom_text_uart",
-    functionName: "OSD_CUSTOM_TEXT",
     baud: { setting: "osd_custom_text_baud" },
 });
 
+const { confirmPortConflicts } = usePortConflicts(
+    () => [osdPortConflict, customTextPortConflict],
+    () => [osdPortSelection, customTextPortSelection],
+);
+
 const customTextPortAssigned = computed(() => customTextPortIdentifier.value !== PORT_NONE);
 
+// A UART assignment only takes effect at serial init, so a pending port change turns the primary
+// button into Save and Reboot instead of a plain Save.
+const portSettingsChanged = computed(() => osdPortChanged.value || customTextPortChanged.value);
+
 // A port-only change still has to enable Save; the OSD store's dirty state cannot see these.
-const portsOrConfigDirty = computed(() => osdStore.dirty || osdPortChanged.value || customTextPortChanged.value);
+const portsOrConfigDirty = computed(() => osdStore.dirty || portSettingsChanged.value);
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import UiBox from "@/components/elements/UiBox.vue";
@@ -654,6 +672,7 @@ import { i18n } from "@/js/localization";
 import { clamp } from "@/js/utils/common";
 
 import { FONT, SYM } from "@/js/utils/osdFont";
+import { getVisibleAlarmEntries } from "./osd/osd_alarms";
 import { OSD_CONSTANTS } from "./osd/osd_constants";
 import { positionConfigs, getPresetGridCells } from "./osd/osd_positions";
 import LogoManager from "@/js/LogoManager";
@@ -662,8 +681,11 @@ import MSP from "@/js/msp";
 import { reinitializeConnection } from "@/js/serial_backend";
 import { gui_log } from "@/js/gui_log";
 import { tracking } from "@/js/Analytics";
+import semver from "semver";
+import { API_VERSION_1_48 } from "@/js/data_storage";
 
 const osdStore = useOsdStore();
+const fcStore = useFlightControllerStore();
 const { hasBuildOption } = useBuildOptions();
 
 // Refs for DOM elements
@@ -690,7 +712,9 @@ const logoImageSizeParams = {
     logoWidthPx: FONT.constants.SIZES.CHAR_WIDTH * 24,
     logoHeightPx: FONT.constants.SIZES.CHAR_HEIGHT * 4,
 };
-const { label: saveButtonText, flash: flashSaveButtonText } = useTransientLabel(() => i18n.getMessage("osdSetupSave"));
+const { label: saveButtonText, flash: flashSaveButtonText } = useTransientLabel(() =>
+    i18n.getMessage(portSettingsChanged.value ? "osdSetupSaveReboot" : "osdSetupSave"),
+);
 const saveMenuItems = computed(() => [
     [
         {
@@ -730,12 +754,14 @@ const isDraggingGrid = ref(false);
 const effectiveShowRulers = computed(() => showRulers.value);
 
 // Convert alarms object to array for template iteration
+const hideCapacityAlarm = computed(
+    () =>
+        fcStore.config?.apiVersion &&
+        semver.gte(fcStore.config.apiVersion, API_VERSION_1_48) &&
+        (fcStore.config.numberOfBatteryProfiles || 0) > 0,
+);
 const alarmEntries = computed(() => {
-    const alarmsObj = osdStore.alarms;
-    if (!alarmsObj || typeof alarmsObj !== "object" || Array.isArray(alarmsObj)) {
-        return [];
-    }
-    return Object.entries(alarmsObj).map(([key, alarm]) => ({ key, alarm }));
+    return getVisibleAlarmEntries(osdStore.alarms, hideCapacityAlarm.value);
 });
 useOsdRuler(rulerCanvas, previewContainerOuter, effectiveShowRulers);
 
@@ -804,6 +830,20 @@ const timerSources = [
 
 // Font types from OSD constants
 const fontTypes = computed(() => OSD_CONSTANTS.FONT_TYPES || []);
+
+// FB_OSD (framebuffer OSD) in the PICO implementation has two modes and two font types: pixel / non-pixel, and standard / small font.
+// Typically, non-pixel uses standard fonts for MAX7456 compatibility, and pixel uses a new small font type.
+const isFbOsdSmallFont = computed(() => Boolean(osdStore.state.requiresFbSmallFont));
+
+// Fonts flagged fbOsdSmallFont in FONT_TYPES are meant for FB_OSD small font mode, and the standard
+// fonts for everything else. Selection is left free so any font can be previewed; the upload is guarded.
+function isFontUsable(font) {
+    return Boolean(font) && Boolean(font.fbOsdSmallFont) === isFbOsdSmallFont.value;
+}
+
+function firstUsableFontIndex() {
+    return fontTypes.value.findIndex(isFontUsable);
+}
 
 // USelect computed items
 const profileOptions = computed(() =>
@@ -1433,41 +1473,42 @@ async function refreshConfig() {
 
 // Save OSD configuration to FC
 const saveConfig = () =>
-    runSave(
-        async () => {
-            // Sync store state to the shared OSD.data bridge used by legacy helpers.
-            osdStore.syncToLegacy();
+    runSave(async () => {
+        // Warn before a pick that would take a port from another feature; a cancel here leaves the
+        // save untouched, before anything has been written to the FC.
+        if (!(await confirmPortConflicts())) {
+            return;
+        }
 
-            // Send all OSD config to FC and write EEPROM.
-            await osdStore.saveAllConfig(async () => {
-                await writeOsdPort();
-                await writeCustomTextPort();
-            });
+        // Sync store state to the shared OSD.data bridge used by legacy helpers.
+        osdStore.syncToLegacy();
 
-            // Track analytics
-            const changes = analyticsChanges.value;
-            if (Object.keys(changes).length > 0) {
-                tracking.sendSaveAndChangeEvents(tracking.EVENT_CATEGORIES.FLIGHT_CONTROLLER, changes, "osd");
-                analyticsChanges.value = {};
-            }
+        // Send all OSD config to FC and write EEPROM.
+        await osdStore.saveAllConfig(async () => {
+            await writeOsdPort();
+            await writeCustomTextPort();
+        });
 
-            // Show success
-            gui_log(i18n.getMessage("osdSettingsSaved"));
-            flashSaveButtonText(i18n.getMessage("osdButtonSaved"), 2000);
-        },
-        {
-            onError: (error) => {
-                console.error("Failed to save OSD configuration:", error);
-                gui_log(i18n.getMessage("error", { errorMessage: "Failed to save OSD configuration" }));
-            },
-        },
-    );
+        // Track analytics
+        const changes = analyticsChanges.value;
+        if (Object.keys(changes).length > 0) {
+            tracking.sendSaveAndChangeEvents(tracking.EVENT_CATEGORIES.FLIGHT_CONTROLLER, changes, "osd");
+            analyticsChanges.value = {};
+        }
+
+        // Show success
+        gui_log(i18n.getMessage("osdSettingsSaved"));
+        flashSaveButtonText(i18n.getMessage("osdButtonSaved"), 2000);
+    });
 
 // A UART assignment only takes effect at serial init, so the port rows need a reboot to bite.
 const saveAndRebootConfig = async () => {
     await saveConfig();
     await reboot();
 };
+
+// The primary button does what its label says: with a port change pending it saves and reboots.
+const savePrimaryAction = () => (portSettingsChanged.value ? saveAndRebootConfig() : saveConfig());
 
 // Font Manager
 const fontCharacterUrls = computed(() => {
@@ -1484,6 +1525,12 @@ const fontCharacterUrls = computed(() => {
 
 const fontDataVersion = ref(0);
 let lastFontPresetRequestId = 0;
+
+// Track when the most recently requested preset has finished loading (or failed).
+let fontPresetLoad = Promise.resolve();
+
+// FONT.data is not reactive; re-evaluate whenever a font is (re)loaded.
+const isSmallFontLoaded = computed(() => fontDataVersion.value >= 0 && FONT.isSmallFont());
 
 function closeFontManager() {
     fontManagerOpen.value = false;
@@ -1516,16 +1563,32 @@ async function openFontManager() {
     // Initialize LogoManager (caches DOM elements via querySelector)
     LogoManager.init(FONT, SYM.LOGO);
 
-    // Load selected/default preset on first open if no font is loaded yet.
-    if (!FONT.data.character_image_urls.length && fontTypes.value.length > 0) {
-        const presetToLoad = Math.max(0, selectedFontPreset.value);
+    // Load a preset if nothing is loaded yet, or if the selected preset is not usable with this OSD
+    const fontLoaded = FONT.data.character_image_urls.length > 0;
+
+    if (fontTypes.value.length === 0 || (fontLoaded && selectedFontPreset.value === -1)) {
+        // No presets available or keeping user supplied font file
+        refreshFontManagerPreviews();
+        return;
+    }
+
+    let presetToLoad = Math.max(0, selectedFontPreset.value);
+    if (!isFontUsable(fontTypes.value[presetToLoad])) {
+        presetToLoad = Math.max(0, firstUsableFontIndex());
+    }
+
+    if (!fontLoaded || presetToLoad !== selectedFontPreset.value) {
         selectedFontPreset.value = presetToLoad;
         loadFontPreset(presetToLoad);
     } else {
-        // Keep dialog previews in sync when font data was loaded earlier (e.g. during tab init).
-        LogoManager.drawPreview();
-        fontDataVersion.value++;
+        refreshFontManagerPreviews();
     }
+}
+
+// Keep dialog previews in sync with font data loaded earlier (e.g. during tab init).
+function refreshFontManagerPreviews() {
+    LogoManager.drawPreview();
+    fontDataVersion.value++;
 }
 
 function loadFontPreset(index) {
@@ -1535,18 +1598,18 @@ function loadFontPreset(index) {
     }
 
     const fontVer = 2;
+    const requestId = ++lastFontPresetRequestId;
 
     // If this font is already loaded in memory, just trigger reactivity
     if (FONT.data?.loaded_font_file === font.file && FONT.data?.characters?.length > 0) {
+        fontPresetLoad = Promise.resolve();
         fontDataVersion.value++;
         LogoManager.drawPreview();
         updatePreviewBuffer();
         return;
     }
 
-    const requestId = ++lastFontPresetRequestId;
-
-    fetch(`./resources/osd/${fontVer}/${font.file}.mcm`)
+    fontPresetLoad = fetch(`./resources/osd/${fontVer}/${font.file}.mcm`)
         .then((res) => res.text())
         .then((data) => {
             if (requestId !== lastFontPresetRequestId) {
@@ -1595,12 +1658,30 @@ function replaceLogoImage() {
         .catch((error) => console.error(error));
 }
 
+function confirmFontUpload() {
+    const warningKey = isFbOsdSmallFont.value
+        ? "osdSetupUploadFontWarningNeedSmallFont"
+        : "osdSetupUploadFontWarningNeedStandardFont";
+    return globalThis.confirm(i18n.getMessage(warningKey));
+}
+
 async function flashFont() {
     if (GUI.connect_lock) {
         return;
     }
 
     GUI.connect_lock = true;
+
+    // Wait for any background load (avoid uploading a partially replaced font).
+    // Give up if the selected preset is still not the loaded font.
+    await fontPresetLoad;
+    const presetFont = fontTypes.value[selectedFontPreset.value];
+    if (presetFont && FONT.data.loaded_font_file !== presetFont.file) {
+        console.error(`Font preset ${presetFont.file} is not loaded, cannot upload`);
+        uploadProgressLabel.value = i18n.getMessage("osdSetupUploadingFontFailed");
+        GUI.connect_lock = false;
+        return;
+    }
 
     // If "User supplied font" is selected but no custom font file has been loaded yet,
     // prompt the user to pick a file before proceeding to upload.
@@ -1617,6 +1698,14 @@ async function flashFont() {
             console.error("User cancelled custom font selection or error occurred", err);
             GUI.connect_lock = false;
             return; // Cancel the upload process
+        }
+    }
+
+    // Warn before uploading a font (built-in or user supplied) that does not match the OSD's font mode.
+    if (FONT.isSmallFont() !== isFbOsdSmallFont.value) {
+        if (!confirmFontUpload()) {
+            GUI.connect_lock = false;
+            return;
         }
     }
 

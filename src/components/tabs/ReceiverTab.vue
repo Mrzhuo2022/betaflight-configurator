@@ -33,7 +33,11 @@
                     </UiBox>
                     <!-- Channel Bars -->
                     <div class="bars">
-                        <ul v-for="(channel, index) in channelBars" :key="index">
+                        <ul
+                            v-for="(channel, index) in channelBars"
+                            :key="index"
+                            :class="channel.isAux ? `aux-${channel.state}` : undefined"
+                        >
                             <li class="name">{{ channel.name }}</li>
                             <div class="w-full relative">
                                 <UProgress
@@ -608,18 +612,19 @@ import { useFlightControllerStore } from "@/stores/fc";
 import { useConnectionStore } from "@/stores/connection";
 import { useDirtyState } from "@/composables/useDirtyState";
 import { useReboot } from "@/composables/useReboot";
-import { useSaving } from "@/composables/useSaving";
+import { useSaving, withSaveFailureMessage } from "@/composables/useSaving";
 import { runTabLoad } from "@/composables/useTabLoad";
 import { useInterval } from "../../composables/useInterval";
 import BaseTab from "./BaseTab.vue";
 import WikiButton from "@/components/elements/WikiButton.vue";
 import { i18n } from "@/js/localization";
+import { entriesFromModeRanges } from "@/js/utils/modeRanges";
 import MSP from "@/js/msp";
 import MSPCodes from "@/js/msp/MSPCodes";
 import { mspHelper } from "@/js/msp/MSPHelper";
 import GUI from "@/js/gui";
 import Model from "@/js/model";
-import RateCurve from "@/js/RateCurve";
+import RateCurve, { axisRateCurveParams } from "@/js/RateCurve";
 import { degToRad } from "@/js/utils/common";
 import { bit_check } from "@/js/bit";
 import { get as getConfig, set as setConfig } from "@/js/ConfigStorage";
@@ -628,11 +633,12 @@ import { gui_log } from "@/js/gui_log";
 import DarkTheme from "@/js/DarkTheme";
 import windowWatcherUtil from "@/js/utils/window_watchers";
 import { API_VERSION_1_45, API_VERSION_1_47 } from "@/js/data_storage";
-import CryptoES from "crypto-es";
+import { MD5 } from "crypto-es";
 import semver from "semver";
 import * as THREE from "three";
 import * as d3 from "d3";
 import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
 import { PORT_NONE } from "@/composables/ports/portNames";
 import UiBox from "../elements/UiBox.vue";
 import SettingRow from "../elements/SettingRow.vue";
@@ -729,21 +735,11 @@ const {
     writable: rxPortWritable,
     options: rxPortOptions,
     selectedIdentifier: rxPortIdentifier,
+    conflict: rxPortConflict,
+    selection: rxPortSelection,
     load: loadRxPort,
     write: writeRxPort,
-} = useFeaturePort({ setting: "rx_uart", functionName: "RX_SERIAL" });
-
-// Every protocol a telemetry instance may claim in the synthesised mask. Which one it sets depends
-// on its configured protocol, and the three instances collapse into the same bits, so none of them
-// can be read back from the mask.
-const TELEMETRY_FUNCTIONS = [
-    "TELEMETRY_FRSKY",
-    "TELEMETRY_HOTT",
-    "TELEMETRY_LTM",
-    "TELEMETRY_SMARTPORT",
-    "TELEMETRY_MAVLINK",
-    "TELEMETRY_IBUS",
-];
+} = useFeaturePort({ setting: "rx_uart" });
 
 // MAX_TELEMETRY_PROVIDERS is a compile-time constant that never reaches the app, so each instance
 // is probed and only the ones this build has report themselves available. reactive() rather than a
@@ -752,7 +748,6 @@ const telemetryPorts = [1, 2, 3].map((instance) =>
     reactive(
         useFeaturePort({
             setting: `telemetry_${instance}_uart`,
-            functionName: TELEMETRY_FUNCTIONS,
             baud: { setting: `telemetry_${instance}_baud` },
             protocol: { setting: `telemetry_${instance}_protocol` },
         }),
@@ -780,9 +775,18 @@ const {
     writable: rcdevicePortWritable,
     options: rcdevicePortOptions,
     selectedIdentifier: rcdevicePortIdentifier,
+    conflict: rcdevicePortConflict,
+    selection: rcdevicePortSelection,
     load: loadRcdevicePort,
     write: writeRcdevicePort,
-} = useFeaturePort({ setting: "rcdevice_uart", functionName: "RUNCAM_DEVICE_CONTROL" });
+} = useFeaturePort({ setting: "rcdevice_uart" });
+
+// Every port this tab can assign, so a save can warn before taking one from another feature, or
+// before two of these features would land on the same port at once.
+const { confirmPortConflicts } = usePortConflicts(
+    () => [rxPortConflict, rcdevicePortConflict, ...telemetryPorts.map((port) => port.conflict)],
+    () => [rxPortSelection, rcdevicePortSelection, ...telemetryPorts.map((port) => port.selection)],
+);
 
 // Dirty state tracking
 /** @returns {string} serialized receiver state for dirty comparison */
@@ -949,6 +953,36 @@ const rssiChannelOptions = computed(() => {
 });
 
 // Channel bars data
+const auxModeRanges = computed(() => {
+    const rangesByAux = new Map();
+
+    for (const { entry } of entriesFromModeRanges(fcStore.modeRanges ?? [], fcStore.modeRangesExtra ?? [])) {
+        if (entry.kind !== "range" || entry.auxChannelIndex < 0) {
+            continue;
+        }
+
+        const ranges = rangesByAux.get(entry.auxChannelIndex) ?? [];
+        ranges.push(entry.sliderRange);
+        rangesByAux.set(entry.auxChannelIndex, ranges);
+    }
+
+    return rangesByAux;
+});
+
+function getAuxVisualState(auxIndex, value) {
+    const ranges = auxModeRanges.value.get(auxIndex);
+
+    if (!ranges?.length) {
+        return "unused";
+    }
+
+    const channelValue = Math.max(900, Math.min(2099, value ?? 1500));
+
+    const active = ranges.some(([start, end]) => channelValue >= start && channelValue < end);
+
+    return active ? "active" : "used";
+}
+
 const channelBars = computed(() => {
     const bars = [];
     const barNames = [t("controlAxisRoll"), t("controlAxisPitch"), t("controlAxisYaw"), t("controlAxisThrottle")];
@@ -959,14 +993,22 @@ const channelBars = computed(() => {
     let auxIndex = 1;
     for (let i = 0; i < numBars; i++) {
         let name;
+        let auxChannelIndex = null;
         if (i < barNames.length) {
             name = barNames[i];
         } else {
+            auxChannelIndex = auxIndex - 1;
             name = t(`controlAxisAux${auxIndex++}`);
         }
         const value = channels[i] || 1500;
         const width = Math.max(0, Math.min(100, ((value - meterScale.min) / (meterScale.max - meterScale.min)) * 100));
-        bars.push({ name, value, width });
+        bars.push({
+            name,
+            value,
+            width,
+            isAux: auxChannelIndex !== null,
+            state: auxChannelIndex !== null ? getAuxVisualState(auxChannelIndex, value) : null,
+        });
     }
     return bars;
 });
@@ -991,7 +1033,7 @@ function elrsBindingPhraseToBytes(text) {
     let uidBytes = [0, 0, 0, 0, 0, 0];
     if (text) {
         const bindingPhraseFull = `-DMY_BINDING_PHRASE="${text}"`;
-        const hash = CryptoES.MD5(bindingPhraseFull).toString();
+        const hash = MD5(bindingPhraseFull).toString();
         const bytes = hash.match(/.{1,2}/g).map((byte) => parseInt(byte, 16));
         const view = new DataView(new ArrayBuffer(6));
         for (let i = 0; i < 6; i++) {
@@ -1206,12 +1248,15 @@ async function loadConfig() {
         async () => {
             await MSP.promise(MSPCodes.MSP_FEATURE_CONFIG);
             await MSP.promise(MSPCodes.MSP_RC);
+            await MSP.promise(MSPCodes.MSP_MODE_RANGES);
+            await MSP.promise(MSPCodes.MSP_MODE_RANGES_EXTRA);
             await MSP.promise(MSPCodes.MSP_RSSI_CONFIG);
             await MSP.promise(MSPCodes.MSP_RC_TUNING);
             await MSP.promise(MSPCodes.MSP_RX_MAP);
             await MSP.promise(MSPCodes.MSP_RC_DEADBAND);
             await MSP.promise(MSPCodes.MSP_RX_CONFIG);
             await MSP.promise(MSPCodes.MSP_MIXER_CONFIG);
+            await MSP.promise(MSPCodes.MSP_MOTOR_CONFIG);
             await loadRxPort();
             await loadRcdevicePort();
             for (const port of telemetryPorts) {
@@ -1255,74 +1300,74 @@ async function loadConfig() {
 
 // Save configuration
 const saveConfig = (withReboot = false) =>
-    runSave(
-        async () => {
-            const savedSnapshot = takeSnapshot();
+    runSave(async () => {
+        // Warn before a pick that would take a port from another feature; a cancel here leaves the
+        // save untouched, before anything has been written to the FC.
+        if (!(await confirmPortConflicts())) {
+            return;
+        }
 
-            // Update RC_MAP from channel map string
-            validateChannelMap();
+        const savedSnapshot = takeSnapshot();
 
-            // Handle ELRS binding phrase
-            if (elrsBindingPhraseEnabled.value) {
-                const elrsUidChars = elrsBindingPhraseToBytes(elrsBindingPhrase.value);
-                if (elrsUidChars.length === 6) {
-                    fcStore.rxConfig.elrsUid = elrsUidChars;
-                    saveElrsBindingPhrase(elrsUidChars.join(","), elrsBindingPhrase.value);
-                } else {
-                    fcStore.rxConfig.elrsUid = [0, 0, 0, 0, 0, 0];
-                }
-            }
+        // Update RC_MAP from channel map string
+        validateChannelMap();
 
-            // Set cutoffs to 0 for auto mode
-            if (setpointManualMode.value === "0") {
-                fcStore.rxConfig.rcSmoothingSetpointCutoff = 0;
-            }
-            if (showThrottleSmoothingOptions.value && throttleManualMode.value === "0") {
-                fcStore.rxConfig.rcSmoothingThrottleCutoff = 0;
-            }
-            if (!showThrottleSmoothingOptions.value && feedforwardManualMode.value === "0") {
-                fcStore.rxConfig.rcSmoothingFeedforwardCutoff = 0;
-            }
-
-            // Save sequence
-            await MSP.promise(MSPCodes.MSP_SET_RX_MAP, mspHelper.crunch(MSPCodes.MSP_SET_RX_MAP));
-            await MSP.promise(MSPCodes.MSP_SET_RSSI_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RSSI_CONFIG));
-            await MSP.promise(MSPCodes.MSP_SET_RC_DEADBAND, mspHelper.crunch(MSPCodes.MSP_SET_RC_DEADBAND));
-            await MSP.promise(MSPCodes.MSP_SET_RX_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RX_CONFIG));
-
-            // rx_uart shares the RX parameter group with everything MSP_SET_RX_CONFIG just wrote,
-            // and the persist below serialises that group, so this has to sit between the two.
-            // Throwing skips the persist, so a refused port leaves nothing written to EEPROM.
-            try {
-                await writeRxPort();
-                await writeRcdevicePort();
-                for (const port of telemetryPorts) {
-                    await port.write();
-                }
-            } catch (error) {
-                gui_log(t("receiverSerialPortSaveFailed"));
-                throw error;
-            }
-
-            // Unconditional: the telemetry feature switch lives on this tab, and a mask change has
-            // to reach the FC whether or not the save also reboots.
-            await MSP.promise(MSPCodes.MSP_SET_FEATURE_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_FEATURE_CONFIG));
-
-            if (withReboot) {
-                await saveAndReboot();
+        // Handle ELRS binding phrase
+        if (elrsBindingPhraseEnabled.value) {
+            const elrsUidChars = elrsBindingPhraseToBytes(elrsBindingPhrase.value);
+            if (elrsUidChars.length === 6) {
+                fcStore.rxConfig.elrsUid = elrsUidChars;
+                saveElrsBindingPhrase(elrsUidChars.join(","), elrsBindingPhrase.value);
             } else {
-                await saveToEeprom();
-                gui_log(t("receiverConfigSaved") || "Configuration saved");
+                fcStore.rxConfig.elrsUid = [0, 0, 0, 0, 0, 0];
             }
+        }
 
-            markClean(savedSnapshot);
+        // Set cutoffs to 0 for auto mode
+        if (setpointManualMode.value === "0") {
+            fcStore.rxConfig.rcSmoothingSetpointCutoff = 0;
+        }
+        if (showThrottleSmoothingOptions.value && throttleManualMode.value === "0") {
+            fcStore.rxConfig.rcSmoothingThrottleCutoff = 0;
+        }
+        if (!showThrottleSmoothingOptions.value && feedforwardManualMode.value === "0") {
+            fcStore.rxConfig.rcSmoothingFeedforwardCutoff = 0;
+        }
 
-            needReboot.value = false;
-        },
-        {
-            onError: (e) => console.error("Failed to save configuration", e),
-        },
-    );
+        // Save sequence
+        await MSP.promise(MSPCodes.MSP_SET_RX_MAP, mspHelper.crunch(MSPCodes.MSP_SET_RX_MAP));
+        await MSP.promise(MSPCodes.MSP_SET_RSSI_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RSSI_CONFIG));
+        await MSP.promise(MSPCodes.MSP_SET_RC_DEADBAND, mspHelper.crunch(MSPCodes.MSP_SET_RC_DEADBAND));
+        await MSP.promise(MSPCodes.MSP_SET_RX_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_RX_CONFIG));
+
+        // rx_uart shares the RX parameter group with everything MSP_SET_RX_CONFIG just wrote,
+        // and the persist below serialises that group, so this has to sit between the two.
+        // Throwing skips the persist, so a refused port leaves nothing written to EEPROM.
+        try {
+            await writeRxPort();
+            await writeRcdevicePort();
+            for (const port of telemetryPorts) {
+                await port.write();
+            }
+        } catch (error) {
+            throw withSaveFailureMessage(error, t("receiverSerialPortSaveFailed"));
+        }
+
+        // Unconditional: the telemetry feature switch lives on this tab, and a mask change has
+        // to reach the FC whether or not the save also reboots.
+        await MSP.promise(MSPCodes.MSP_SET_FEATURE_CONFIG, mspHelper.crunch(MSPCodes.MSP_SET_FEATURE_CONFIG));
+
+        if (withReboot) {
+            await saveAndReboot();
+        } else {
+            await saveToEeprom();
+            gui_log(t("receiverConfigSaved") || "Configuration saved");
+        }
+
+        markClean(savedSnapshot);
+
+        needReboot.value = false;
+    });
 
 // Model preview
 function initModelPreview() {
@@ -1354,38 +1399,11 @@ function renderModel(timestamp) {
         const delta = timer.getDelta();
 
         const roll =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[0],
-                currentRates.roll_rate,
-                currentRates.rc_rate,
-                currentRates.rc_expo,
-                currentRates.superexpo,
-                currentRates.deadband,
-                currentRates.roll_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[0], axisRateCurveParams(currentRates, "roll"));
         const pitch =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[1],
-                currentRates.pitch_rate,
-                currentRates.rc_rate_pitch,
-                currentRates.rc_pitch_expo,
-                currentRates.superexpo,
-                currentRates.deadband,
-                currentRates.pitch_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[1], axisRateCurveParams(currentRates, "pitch"));
         const yaw =
-            delta *
-            rateCurve.rcCommandRawToDegreesPerSecond(
-                channels[2],
-                currentRates.yaw_rate,
-                currentRates.rc_rate_yaw,
-                currentRates.rc_yaw_expo,
-                currentRates.superexpo,
-                currentRates.yawDeadband,
-                currentRates.yaw_rate_limit,
-            );
+            delta * rateCurve.rcCommandRawToDegreesPerSecond(channels[2], axisRateCurveParams(currentRates, "yaw"));
 
         model.rotateBy(-degToRad(pitch), -degToRad(yaw), -degToRad(roll));
     }
@@ -1607,6 +1625,25 @@ onUnmounted(() => {
             }
         }
     }
+    ul.aux-unused {
+        :deep([data-slot="indicator"]) {
+            background-color: #6b7280 !important;
+        }
+    }
+
+    ul.aux-used {
+        :deep([data-slot="indicator"]) {
+            background-color: #0891b2 !important;
+        }
+    }
+
+    ul.aux-active {
+        :deep([data-slot="indicator"]) {
+            background-color: #22d3ee !important;
+            box-shadow: 0 0 7px rgba(34, 211, 238, 0.65);
+        }
+    }
+
     .name {
         width: 5rem;
         text-align: end;

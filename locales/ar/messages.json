@@ -396,9 +396,6 @@
     "sensorConfigSaved": {
         "message": "تم حفظ إعدادات المستشعرات"
     },
-    "sensorConfigSaveFailed": {
-        "message": "فشل حفظ إعدادات المستشعرات"
-    },
     "sensorConfigMagnetometer": {
         "message": "المقياس المغناطيسي"
     },
@@ -825,12 +822,6 @@
     "reportProblemsDialogAPI_VERSION_MAX_SUPPORTED": {
         "message": "النسخة الحالية من التطبيق (<strong>$1<\/strong>) لا تدعم إصدار الـ<strong>firmware $2<\/strong>.<br>$t(configuratorUpdateHelp.message)\n"
     },
-    "reportProblemsDialogMOTOR_PROTOCOL_DISABLED": {
-        "message": "<strong>لا يوجد بروتوكول إخراج للمحركات محدد<\/strong>.<br>يرجى اختيار بروتوكول إخراج محركات مناسب لوحدات ESCs الخاصة بك في ‎'$t(configurationEscFeatures.message)'‎ ضمن تبويب ‎'$t(tabMotorTesting.message)'‎.<br>$t(escProtocolDisabledMessage.message)"
-    },
-    "reportProblemsDialogACC_NEEDS_CALIBRATION": {
-        "message": "<strong>مقياس التسارع مفعل، لكنه غير معاير<\/strong>.<br>إذا كنت تريد استخدام مقياس التسارع، اتبع التعليمات الخاصة بـ '$t(initialSetupButtonCalibrateAccel.message)' في علامة التبويب '$t(tabSetup.message)'. إذا كان أي وظيفة تتطلب مقياس التسارع مفعلة (أوضاع المستوى التلقائي، إنقاذ GPS، ...)، سيتم تعطيل وضع الاستعداد للطيران حتى يتم معايرة مقياس التسارع.<br>إذا لم تكن تخطط لاستخدام مقياس التسارع، يوصى بتعطيله في \"$t(configurationSystem.message)\" في علامة التبويب \"$t(tabConfiguration.message)\"."
-    },
     "infoVersionOs": {
         "message": "نظام التشغيل: <strong>{{operatingSystem}}<\/strong>",
         "description": "Message that appears in the GUI log panel indicating operating system"
@@ -1122,7 +1113,7 @@
         "message": "إعادة تعيين محور Z، والإزاحة: $1 درجة"
     },
     "initialSetupHeading": {
-        "message": "**الاتجاه (Yaw)**:",
+        "message": "الاتجاه (Yaw):",
         "description": "Heading [yaw] attitude value shown on Setup tab when no magnetometer is active"
     },
     "initialSetupMagHeading": {
@@ -1133,7 +1124,7 @@
         "message": "نوع المازج"
     },
     "initialSetupThrottleHead": {
-        "message": "ضبط دفع المحرك"
+        "message": "ضبط دواسة الوقود"
     },
     "initialSetupMinimum": {
         "message": "الحد الأدنى:"
@@ -1304,7 +1295,7 @@
         "description": "Message that pops up to describe the CALIBRATING arming disable flag"
     },
     "initialSetupArmingDisableFlagsTooltipTHROTTLE": {
-        "message": "قناة دفع المحرك مرتفعة جدًا",
+        "message": "قناة دواسة الوقود مرتفعة جدًا",
         "description": "Message that pops up to describe the THROTTLE arming disable flag"
     },
     "initialSetupArmingDisableFlagsTooltipANGLE": {
@@ -2181,15 +2172,6 @@
     "gpsSerialPortSaveFailed": {
         "message": "تعذر تعيين منفذ GPS التسلسلي، لذلك لم يتم حفظ أي شيء."
     },
-    "gpsCanDevice": {
-        "message": "ناقل CAN"
-    },
-    "gpsCanDeviceHelp": {
-        "message": "ناقل CAN الموصول به وحدات DroneCAN. يخص هذا الإعداد نظام DroneCAN بالكامل؛ لذلك سيؤدي تغييره إلى نقل جميع أجهزة DroneCAN، وليس جهاز GPS فقط. يتطلب تغيير هذا الإعداد إعادة التشغيل.\n"
-    },
-    "gpsCanDeviceSaveFailed": {
-        "message": "تعذر تعيين منفذ GPS التسلسلي، لذلك لم يتم حفظ أي شيء."
-    },
     "configurationGPSAutoBaud": {
         "message": "الباود التلقائي"
     },
@@ -2921,7 +2903,7 @@
         "description": "Yaw label in signal graph"
     },
     "receiverRowContainerThrottle": {
-        "message": "دفع المحرك [T]:",
+        "message": "دواسة الوقود [T]:",
         "description": "Throttle label in signal graph"
     },
     "receiverButtonSave": {
@@ -5006,7 +4988,7 @@
         "message": "وردي غامق"
     },
     "controlAxisRoll": {
-        "message": "اللف [A]"
+        "message": "Roll [A]"
     },
     "controlAxisPitch": {
         "message": "PITCH [E]"
@@ -5015,7 +4997,7 @@
         "message": "YAW [R]"
     },
     "controlAxisThrottle": {
-        "message": "لون Throttle]"
+        "message": "Throttle [T]"
     },
     "controlAxisAux1": {
         "message": "إضافي 1"
@@ -6749,7 +6731,7 @@
         "message": "مكاسب PID لمحور ROLL"
     },
     "osdTextElementPIDPitch": {
-        "message": "PID لمحور OITCH\n",
+        "message": "PID لمحور PITCH\n",
         "description": "One of the elements of the OSD"
     },
     "osdDescElementPIDPitch": {
@@ -7548,9 +7530,6 @@
     "osdWarningTextOverCap": {
         "message": "تجاوز سعة البطارية",
         "description": "One of the warnings that can be selected to be shown in the OSD"
-    },
-    "osdWarningOverCap": {
-        "message": "يعرض تحذيرًا عندما تتجاوز السعة المستهلكة بوحدة mAh حد السعة المحدد.\n"
     },
     "osdWarningTextRSNR": {
         "message": "نسبة الإشارة إلى الضوضاء عند المستقبِل.",

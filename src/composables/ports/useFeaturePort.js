@@ -11,18 +11,29 @@ import {
     send as cliSend,
 } from "../useMspCliSession";
 import { serialPortsAreReadOnly } from "./usePortsReadOnly";
-import { PORT_NONE, findPortIdentifierByCliName, formatPortSetCommand, getPortDisplayName } from "./portNames";
+import {
+    PORT_NONE,
+    findPortIdentifierByCliName,
+    formatPortSetCommand,
+    getPortCliName,
+    getPortDisplayName,
+} from "./portNames";
 import { unreportedSoftSerialIdentifiers } from "./softSerial";
+import { describeClaim } from "./portClaims";
+import { loadPortClaims } from "./usePortClaims";
 
 /**
- * @param {Array<{identifier: number, functions: string[]}>} ports
+ * Every port is labelled with what holds it, the caller's own claim included, or marked free.
+ * Without `claims` (a build that cannot say) the names stand alone rather than claim anything.
+ *
+ * @param {Array<{identifier: number}>} ports
  * @param {object} options
- * @param {string|string[]} options.functionName the feature's own function(s), left out of the
- *   annotations. An array where the bit the firmware sets depends on the configured protocol,
- *   as it does for a VTX.
+ * @param {Record<string, string[]>|null} [options.claims] claim names by port CLI name, as
+ *   `peripherals` prints them; a port that is absent is unclaimed
  * @param {number} [options.currentIdentifier] kept in the list even if the FC did not report it
  * @param {string} [options.noneLabel]
- * @param {(functionName: string) => string} [options.describeFunction]
+ * @param {string} [options.freeLabel]
+ * @param {(claim: string) => string} [options.describeClaim]
  * @param {number[]} [options.inactiveIdentifiers] ports the board has but the FC cannot open yet,
  *   listed after the reported ones and marked with `inactiveLabel`
  * @param {string} [options.inactiveLabel]
@@ -31,32 +42,34 @@ import { unreportedSoftSerialIdentifiers } from "./softSerial";
 export function buildPortOptions(
     ports,
     {
-        functionName,
+        claims = null,
         currentIdentifier = PORT_NONE,
         noneLabel = "None",
-        describeFunction = (name) => name,
+        freeLabel = "free",
+        describeClaim = (name) => name,
         inactiveIdentifiers = [],
         inactiveLabel = "inactive",
     } = {},
 ) {
     const options = [{ value: PORT_NONE, label: noneLabel }];
-    const own = Array.isArray(functionName) ? functionName : [functionName];
+
+    const label = (identifier, ...notes) => {
+        const displayName = getPortDisplayName(identifier);
+        const held = claims ? (claims[getPortCliName(identifier)] ?? []).map(describeClaim) : [];
+        if (claims && !held.length && !notes.length) {
+            notes.push(freeLabel);
+        }
+        const detail = [...held, ...notes].join(", ");
+        return detail ? `${displayName} (${detail})` : displayName;
+    };
 
     for (const port of ports ?? []) {
-        const claimedElsewhere = (port.functions ?? []).filter((name) => !own.includes(name));
-        const displayName = getPortDisplayName(port.identifier);
-
-        options.push({
-            value: port.identifier,
-            label: claimedElsewhere.length
-                ? `${displayName} (${claimedElsewhere.map(describeFunction).join(", ")})`
-                : displayName,
-        });
+        options.push({ value: port.identifier, label: label(port.identifier) });
     }
 
     for (const identifier of inactiveIdentifiers) {
         if (!options.some((option) => option.value === identifier)) {
-            options.push({ value: identifier, label: `${getPortDisplayName(identifier)} (${inactiveLabel})` });
+            options.push({ value: identifier, label: label(identifier, inactiveLabel) });
         }
     }
 
@@ -80,10 +93,6 @@ export function buildBaudOptions(rates, current = null) {
     }
 
     return options;
-}
-
-function describePortFunction(functionName) {
-    return i18n.getMessage(`portsFunction_${functionName}`) || functionName;
 }
 
 /**
@@ -128,11 +137,9 @@ async function sendSetting(command) {
  * Serial port assignment for one feature, owned by that feature's own tab.
  *
  * From API 1.49 the port lives on the feature's parameter group, so it is read and written
- * through that setting rather than through the per-port function mask. The mask is only a
- * synthesised view and cannot answer "which port is this feature on" in general: the three MSP
- * and three telemetry instances share a bit, a rangefinder and an optical flow sensor share one,
- * and a VTX or an OSD sets a bit chosen by its protocol, which on MSP is the shared MSP bit. The
- * mask is still what builds the port list and its "claimed by" annotations.
+ * through that setting; the per-port function mask is gone from the wire. MSP still lists the
+ * ports the board has, and the CLI `peripherals` command says what holds each one, which is
+ * where the "claimed by" annotations come from.
  *
  * Whether a build has the setting at all is discovered the same way — a `get` for a setting the
  * firmware was not built with answers INVALID NAME, which is how the instance count for MSP and
@@ -140,16 +147,19 @@ async function sendSetting(command) {
  *
  * @param {object} options
  * @param {string} options.setting CLI setting name, e.g. "rx_uart"
- * @param {string|string[]} options.functionName port function(s) the feature claims in the mask,
- *   used only to keep its own claim out of the annotations
  * @param {{setting: string, rates?: string[]}} [options.baud] omit for a feature with no baud of
  *   its own, such as a serial receiver, whose rate follows the protocol. Without `rates` the
  *   values the firmware prints for the setting are offered.
  * @param {{setting: string}} [options.protocol] a lookup setting the feature carries beside its
  *   port, as a telemetry instance carries its protocol
  */
-export function useFeaturePort({ setting, functionName, baud = null, protocol = null }) {
+export function useFeaturePort({ setting, baud = null, protocol = null }) {
     const fcStore = useFlightControllerStore();
+
+    // The claim the `peripherals` command prints for this feature is the port setting minus its
+    // _uart suffix ("rx_uart" -> "rx", "telemetry_1_uart" -> "telemetry_1"), so a port held by
+    // this same feature reads as its own and not as a clash.
+    const ownClaim = setting.replace(/_uart$/, "");
 
     const apiSupported = computed(() => serialPortsAreReadOnly(fcStore.config.apiVersion));
     const supported = ref(true);
@@ -172,10 +182,11 @@ export function useFeaturePort({ setting, functionName, baud = null, protocol = 
 
     const options = computed(() =>
         buildPortOptions(fcStore.serialConfig?.ports, {
-            functionName,
+            claims: fcStore.serialConfig?.claims ?? null,
             currentIdentifier: selectedIdentifier.value,
             noneLabel: i18n.getMessage("portsPortNone"),
-            describeFunction: describePortFunction,
+            freeLabel: i18n.getMessage("portsPortFree"),
+            describeClaim: (name) => describeClaim(name).label,
             inactiveIdentifiers: unreportedSoftSerialIdentifiers(fcStore.serialConfig?.ports),
             inactiveLabel: i18n.getMessage("portsPortInactive"),
         }),
@@ -183,6 +194,39 @@ export function useFeaturePort({ setting, functionName, baud = null, protocol = 
 
     const baudOptions = computed(() => buildBaudOptions(baudRates.value, selectedBaud.value));
     const protocolOptions = computed(() => (protocolValues.value ?? []).map((value) => ({ value, label: value })));
+
+    // The port the user has picked, when it is already held by another feature and the pick is a
+    // move onto it. Only a change is reported: leaving a port that a shared config already puts
+    // this feature beside another on is not the user creating a clash, so it must not warn on save.
+    // `null` when there is nothing to warn about, or the build cannot say what holds a port.
+    const conflict = computed(() => {
+        if (!portChanged.value || selectedIdentifier.value === PORT_NONE) {
+            return null;
+        }
+
+        const claims = fcStore.serialConfig?.claims;
+        if (!claims) {
+            return null;
+        }
+
+        const heldBy = (claims[getPortCliName(selectedIdentifier.value)] ?? [])
+            .filter((name) => name !== ownClaim)
+            .map((name) => describeClaim(name).label);
+        if (!heldBy.length) {
+            return null;
+        }
+
+        return { port: getPortDisplayName(selectedIdentifier.value), heldBy };
+    });
+
+    // The pending assignment this feature would write, so a tab can catch two of its features
+    // picking the same free port in one save — a clash the claim labels cannot show yet, since
+    // nothing holds the port until the save goes through.
+    const selection = computed(() => ({
+        identifier: selectedIdentifier.value,
+        changed: portChanged.value,
+        label: describeClaim(ownClaim).label,
+    }));
 
     async function load() {
         supported.value = true;
@@ -208,6 +252,8 @@ export function useFeaturePort({ setting, functionName, baud = null, protocol = 
             supported.value = false;
             return;
         }
+
+        await loadPortClaims();
 
         assignedIdentifier.value = findPortIdentifierByCliName(fcStore.serialConfig?.ports, port.value);
         selectedIdentifier.value = assignedIdentifier.value;
@@ -246,6 +292,7 @@ export function useFeaturePort({ setting, functionName, baud = null, protocol = 
         if (portChanged.value) {
             await sendSetting(formatPortSetCommand(setting, selectedIdentifier.value));
             assignedIdentifier.value = selectedIdentifier.value;
+            await loadPortClaims({ refresh: true });
         }
 
         if (baudChanged.value) {
@@ -265,6 +312,8 @@ export function useFeaturePort({ setting, functionName, baud = null, protocol = 
         protocolOptions,
         selectedProtocol,
         changed,
+        conflict,
+        selection,
         load,
         write,
     };

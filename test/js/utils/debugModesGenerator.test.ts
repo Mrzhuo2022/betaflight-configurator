@@ -1,0 +1,299 @@
+import { describe, expect, it } from "vitest";
+import { format, resolveConfig } from "prettier";
+import {
+    maskNonCode,
+    parseEnumBlock,
+    parseDebugModeNames,
+    parseNamedEnums,
+    propertyKey,
+    pullRequestNumber,
+    renderFieldsModule,
+    renderModeFields,
+    resolveFieldIndex,
+} from "../../../scripts/generate-debug-modes.mjs";
+
+/*
+ * The text-handling half of `scripts/generate-debug-modes.mjs`: what it treats as
+ * code, what it reads out of a `//!<` annotation, and how it resolves an index.
+ *
+ * These were reachable only by running the generator against a firmware checkout,
+ * so the way to see a change in them was to regenerate and read the diff. Two
+ * bugs got in that way - a comment marker inside a string literal, and blanking a
+ * literal that held an `#include` filename, which silently cost seven annotated
+ * fields - and both are pinned below.
+ */
+
+const DEBUG_SET_CALLS = (text: string) => [...text.matchAll(/DEBUG_SET\s*\(/g)].length;
+
+describe("maskNonCode", () => {
+    it("keeps every offset, so line numbers and annotation positions still hold", () => {
+        const source = ["int a; // one", "/* two", "   still two */ int b;", "int c; //!< keep"].join("\n");
+        const masked = maskNonCode(source);
+
+        expect(masked).toHaveLength(source.length);
+        expect(masked.split("\n")).toHaveLength(source.split("\n").length);
+        // Code either side of a masked region stays where it was.
+        expect(masked.indexOf("int b;")).toBe(source.indexOf("int b;"));
+        expect(masked.indexOf("int c;")).toBe(source.indexOf("int c;"));
+    });
+
+    it("hides a commented-out call, in either comment form", () => {
+        // rpm_filter.c really carries the block-commented form, and it published
+        // RPM_FILTER as writing four fields that the firmware never writes.
+        const source = [
+            "    DEBUG_SET(DEBUG_REAL, 0, x);",
+            "//  DEBUG_SET(DEBUG_LINE_COMMENTED, 1, y);",
+            "    /* DEBUG_SET(DEBUG_BLOCK_COMMENTED, 2, z); */",
+        ].join("\n");
+
+        expect(DEBUG_SET_CALLS(maskNonCode(source))).toBe(1);
+    });
+
+    it("keeps an annotation, which is a comment it must not discard", () => {
+        const source = "    DEBUG_SET(DEBUG_A, 0, x);  //!< Cycle Time [unit:us]";
+
+        expect(maskNonCode(source)).toContain("//!< Cycle Time [unit:us]");
+    });
+
+    it("does not read a comment marker inside a string literal", () => {
+        // A `//` in a URL used to open a line comment and blank the rest of the
+        // line; a `/*` in a literal used to blank on to the next `*/` in the file.
+        const url = 'const char *u = "http://example.com";  DEBUG_SET(DEBUG_A, 0, x);  //!< A [unit:cm]';
+        const block = 'const char *b = "/* not a comment";  DEBUG_SET(DEBUG_B, 1, y);  //!< B [unit:cm]';
+
+        expect(DEBUG_SET_CALLS(maskNonCode(url))).toBe(1);
+        expect(maskNonCode(url)).toContain("//!< A [unit:cm]");
+        expect(DEBUG_SET_CALLS(maskNonCode(block))).toBe(1);
+        expect(maskNonCode(block)).toContain("//!< B [unit:cm]");
+    });
+
+    it("leaves an include filename alone, which the enum lookup needs", () => {
+        // Blanking literals instead of stepping over them broke the scope walk and
+        // cost seven annotated fields, every one of them an `[enum:...]` field.
+        expect(maskNonCode('#include "failsafe.h"')).toContain('"failsafe.h"');
+    });
+
+    it("handles an unterminated comment and an escaped quote without running away", () => {
+        expect(DEBUG_SET_CALLS(maskNonCode("/* DEBUG_SET(DEBUG_A, 0, x);"))).toBe(0);
+        expect(DEBUG_SET_CALLS(maskNonCode(`char q = '\\'';  DEBUG_SET(DEBUG_A, 0, x);`))).toBe(1);
+    });
+});
+
+describe("parseEnumBlock and parseNamedEnums", () => {
+    it("numbers enumerators from zero, honouring an explicit value", () => {
+        expect([...(parseEnumBlock("A, B, C") ?? [])]).toEqual([
+            ["A", 0],
+            ["B", 1],
+            ["C", 2],
+        ]);
+        expect([...(parseEnumBlock("A, B = 5, C") ?? [])]).toEqual([
+            ["A", 0],
+            ["B", 5],
+            ["C", 6],
+        ]);
+    });
+
+    it("rejects an entry it cannot evaluate, rather than guessing what follows", () => {
+        expect(parseEnumBlock("A, B = (1 << 2), C")).toBeUndefined();
+    });
+
+    it("names a gap left by explicit values, so JS and JSON agree", () => {
+        // A hole renders as an elision in the generated JS but as null in the
+        // generated JSON, and the schema's own `values` rejects a hole.
+        const names = parseNamedEnums("typedef enum { A, B = 3 } gappy_e;").get("gappy_e");
+
+        expect(names).toEqual(["A", null, null, "B"]);
+        expect(JSON.parse(JSON.stringify(names))).toEqual(names);
+    });
+});
+
+describe("resolveFieldIndex", () => {
+    it("resolves a literal and a named constant, and gives up on an expression", () => {
+        const constants = new Map([["DEBUG_SBUS_FRAME_FLAGS", 0]]);
+
+        expect(resolveFieldIndex("3", constants)).toBe(3);
+        expect(resolveFieldIndex("DEBUG_SBUS_FRAME_FLAGS", constants)).toBe(0);
+        expect(resolveFieldIndex("axis", constants)).toBeUndefined();
+        expect(resolveFieldIndex("2 * axis + 1", constants)).toBeUndefined();
+    });
+});
+
+describe("pullRequestNumber", () => {
+    it("accepts a pull request written the three ways GitHub writes it", () => {
+        expect(pullRequestNumber("15596")).toBe("15596");
+        expect(pullRequestNumber("#15596")).toBe("15596");
+        expect(pullRequestNumber("https://github.com/betaflight/betaflight/pull/15596")).toBe("15596");
+    });
+
+    it("refuses anything else, since the number lands in a git refspec", () => {
+        // A refspec built from these would fetch something other than the pull
+        // request, or nothing at all.
+        for (const value of ["", "master", "15596 15597", "refs/heads/x", "../../etc", "15596:master"]) {
+            expect(() => pullRequestNumber(value)).toThrow(/pull request number/);
+        }
+    });
+});
+
+describe("parseDebugModeNames", () => {
+    const table = (body: string) => `const char * const debugModeNames[DEBUG_COUNT] = {\n${body}\n};`;
+
+    it("reads the positional and the designated form", () => {
+        expect(parseDebugModeNames(table('    "NONE",\n    "CYCLETIME",'), "ref").byPosition).toEqual([
+            "NONE",
+            "CYCLETIME",
+        ]);
+        const designated = parseDebugModeNames(
+            table('    [DEBUG_NONE] = "NONE",\n    [DEBUG_PITOT] = "PITOT",'),
+            "ref",
+        );
+        expect([...designated.byIdentifier]).toEqual([
+            ["DEBUG_NONE", "NONE"],
+            ["DEBUG_PITOT", "PITOT"],
+        ]);
+    });
+
+    it("refuses a positional entry that is not a string, rather than shifting the rest", () => {
+        // A skipped entry does not cost one name, it moves every later name an
+        // index early - which would re-map the fields of every log recorded with
+        // that firmware, and say nothing.
+        expect(() => parseDebugModeNames(table('    "NONE",\n    NULL,\n    "CYCLETIME",'), "ref")).toThrow(
+            /not one string literal: "NULL"/,
+        );
+        expect(() => parseDebugModeNames(table('    "NONE",\n    DEBUG_NAME_MACRO,'), "ref")).toThrow(
+            /not one string literal/,
+        );
+    });
+
+    it("refuses two adjacent literals, which C reads as one name and a scan as two", () => {
+        // `"NONE" "CYCLETIME"` is one initialiser holding "NONECYCLETIME", so
+        // reading it as two names shifts every later mode an index early.
+        expect(() => parseDebugModeNames(table('    "NONE" "CYCLETIME",'), "ref")).toThrow(
+            /not one string literal: "<string> <string>"/,
+        );
+        expect(() => parseDebugModeNames(table('    "NONE",\n    "A" "B",\n    "PITOT",'), "ref")).toThrow(
+            /holds an entry that is not one string literal/,
+        );
+    });
+
+    it("still refuses the two forms mixed", () => {
+        expect(() => parseDebugModeNames(table('    "NONE",\n    [DEBUG_PITOT] = "PITOT",'), "ref")).toThrow(
+            /mixes designated and positional/,
+        );
+    });
+});
+
+describe("propertyKey", () => {
+    it("leaves a valid identifier bare and quotes what firmware could still name a mode", () => {
+        // A mode name is firmware text, and a reserved slot falls back to its enum
+        // identifier with DEBUG_ removed, which turns DEBUG_3D into 3D. Emitted
+        // bare, that produces a module that does not parse.
+        expect(propertyKey("CYCLETIME")).toBe("CYCLETIME");
+        expect(propertyKey("GPS_RESCUE_THROTTLE_PID")).toBe("GPS_RESCUE_THROTTLE_PID");
+        expect(propertyKey("3D")).toBe('"3D"');
+        expect(propertyKey("A-B")).toBe('"A-B"');
+        expect(propertyKey("A B")).toBe('"A B"');
+    });
+});
+
+describe("renderModeFields", () => {
+    // Firmware carries no conflicting field since betaflight/betaflight#15727, so
+    // the generated table no longer exercises this; the shapes below are the two
+    // it used to hold.
+    const variant = (label: string, unit: string | null, scale = 1) => ({ label, unit, scale });
+
+    it("names both meanings of a field two subsystems write differently, and drops the unit", () => {
+        const conflicts: unknown[] = [];
+        const source = renderModeFields(
+            "BATTERY",
+            { 3: [variant("Sag Compensation Attenuation", null, 0.001), variant("Voltage Stable Bits", null)] },
+            "1.49.0",
+            conflicts,
+        ).join("\n");
+
+        expect(source).toContain(
+            '3: Object.freeze({ label: "Sag Compensation Attenuation / Voltage Stable Bits", unit: null, scale: 1 })',
+        );
+        expect(conflicts).toEqual([expect.objectContaining({ apiVersion: "1.49.0", mode: "BATTERY", index: 3 })]);
+    });
+
+    it("names both meanings only when they differ", () => {
+        const conflicts: unknown[] = [];
+        const source = renderModeFields(
+            "LIDAR_TF",
+            { 0: [variant("Distance", "cm"), variant("Distance", "m", 0.001)] },
+            "1.49.0",
+            conflicts,
+        ).join("\n");
+
+        expect(source).toContain('0: Object.freeze({ label: "Distance", unit: null, scale: 1 })');
+        expect(conflicts).toHaveLength(1);
+    });
+
+    it("keeps the unit and scale of a field with one meaning", () => {
+        const conflicts: unknown[] = [];
+        const source = renderModeFields("UPT1", { 0: [variant("Distance", "m", 0.001)] }, "1.49.0", conflicts).join(
+            "\n",
+        );
+
+        expect(source).toContain('0: Object.freeze({ label: "Distance", unit: "m", scale: 0.001 })');
+        expect(conflicts).toEqual([]);
+    });
+});
+
+describe("renderFieldsModule", () => {
+    // `--check` compares the generated table with the committed one, which
+    // `npm run format` has been through, so the generator has to write exactly
+    // what Prettier would. An empty conflict list is the case that broke that:
+    // Prettier folds `Object.freeze([` and `]);` onto one line.
+    const TABLE_PATH = "src/js/debug_fields_table.ts";
+    const site = (label: string, unit: string | null, scale: number, sites: string[]) => ({
+        label,
+        unit,
+        scale,
+        sites,
+    });
+    // Every annotated firmware carries enum fields, and the enum table is rendered
+    // after the conflicts, so the fixture has one too.
+    const RESCUE_PHASE = {
+        ...site("Rescue Phase", null, 1, ["src/main/flight/gps_rescue.c:1"]),
+        enumTag: "rescuePhase_e",
+        values: ["RESCUE_IDLE", "RESCUE_INITIALIZE"],
+    };
+    const render = (fields: Record<string, Record<number, ReturnType<typeof site>[]>>) =>
+        renderFieldsModule({
+            repoUrl: "https://github.com/betaflight/betaflight",
+            versions: [{ apiVersion: "1.49.0", commit: "805313c231abcdef", date: "2026-09-22", ref: "master", fields }],
+        });
+    const prettierFormat = async (source: string) => {
+        const options = await resolveConfig(TABLE_PATH, { editorconfig: true });
+        return format(source, { ...options, filepath: TABLE_PATH });
+    };
+
+    it("writes an empty conflict list the way Prettier formats it", async () => {
+        const { source, conflicts } = render({
+            UPT1: { 0: [site("Distance", "m", 0.001, ["src/main/a.c:1"])] },
+            GPS_RESCUE_TRACKING: { 7: [RESCUE_PHASE] },
+        });
+
+        expect(conflicts).toEqual([]);
+        expect(source).toContain(
+            "export const FIRMWARE_DEBUG_FIELD_CONFLICTS: readonly FirmwareDebugFieldConflict[] = Object.freeze([]);",
+        );
+        expect(await prettierFormat(source)).toBe(source);
+    });
+
+    it("writes a conflict list the way Prettier formats it", async () => {
+        const { source, conflicts } = render({
+            GPS_RESCUE_TRACKING: { 7: [RESCUE_PHASE] },
+            BATTERY: {
+                3: [
+                    site("Sag Compensation Attenuation", null, 0.001, ["src/main/flight/mixer.c:1"]),
+                    site("Voltage Stable Bits", null, 1, ["src/main/sensors/battery.c:1"]),
+                ],
+            },
+        });
+
+        expect(conflicts).toHaveLength(1);
+        expect(await prettierFormat(source)).toBe(source);
+    });
+});

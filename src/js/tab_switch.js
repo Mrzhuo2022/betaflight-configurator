@@ -1,8 +1,8 @@
 import GUI from "./gui.js";
-import CONFIGURATOR from "./data_storage.js";
+import CONFIGURATOR from "./data_storage";
 import { i18n } from "./localization.js";
-import { gui_log } from "./gui_log.js";
-import { set as setConfig } from "./ConfigStorage.js";
+import { gui_log } from "./gui_log";
+import { set as setConfig } from "./ConfigStorage";
 import { checkSetupAnalytics } from "./Analytics.js";
 import { mountVueTab, vueTabState } from "./vue_tab_mounter.js";
 import { sidebarItems } from "../components/sidebar/sidebar_items.js";
@@ -35,10 +35,34 @@ function handleDisallowedTab(tabKey, tabLabel) {
     }
     if (GUI.connected_to || GUI.connecting_to) {
         GUI.pendingTab = "firmware_flasher";
+        // Dynamic import: serial_backend.js imports this module statically, so a static
+        // import back would cycle.
         import("./serial_backend.js").then(({ connectDisconnect }) => connectDisconnect());
     } else {
         switchTab("firmware_flasher", { mode: "disconnected", label: tabLabel });
     }
+}
+
+function resetPageZoom() {
+    // iOS zooms in on a focused field and never zooms back out by itself, so without this the
+    // next tab inherits the scale. Clamping maximum-scale for one frame is the only way to
+    // restore it from script; the clamp is lifted again so pinch zoom still works.
+    if (!document.body.classList.contains("mobile-app-shell")) {
+        return;
+    }
+    // Only a focused field zooms iOS in. Blurring anything else would take keyboard focus
+    // off the tab the user just activated.
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active?.isContentEditable) {
+        active.blur();
+    }
+    const meta = document.querySelector("meta[name=viewport]");
+    if (!meta) {
+        return;
+    }
+    const content = meta.getAttribute("content");
+    meta.setAttribute("content", `${content},maximum-scale=1`);
+    requestAnimationFrame(() => meta.setAttribute("content", content));
 }
 
 export function switchTab(tabKey, options = {}) {
@@ -67,6 +91,8 @@ export function switchTab(tabKey, options = {}) {
     if (mode === "connected" && tabKey !== "cli") {
         setConfig({ lastTab: `tab_${tabKey}` });
     }
+
+    resetPageZoom();
 
     GUI.tab_switch_in_progress = true;
     GUI.tab_switch_cleanup(function () {

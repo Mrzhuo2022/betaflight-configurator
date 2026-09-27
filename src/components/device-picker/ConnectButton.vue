@@ -58,10 +58,12 @@ import { defineComponent, computed, ref } from "vue";
 import { useConnectionStore } from "../../stores/connection";
 import { useConnectionBookmarksStore } from "../../stores/connectionBookmarks";
 import DeviceHandler from "../../js/device_handler";
+import { serial } from "../../js/serial";
 import { connectDisconnect, disconnect } from "../../js/serial_backend";
 import { i18n } from "../../js/localization";
 import { set as setConfig } from "../../js/ConfigStorage";
 import { isExpertModeEnabled } from "../../js/utils/isExpertModeEnabled";
+import { isNetworkOnlyBrowser } from "../../js/utils/checkCompatibility";
 import ConnectOptionsDialog from "./ConnectOptionsDialog.vue";
 
 function selectAndConnect(path) {
@@ -129,6 +131,8 @@ export default defineComponent({
         const isVirtualMode = computed(() => connectionStore.virtualMode);
         const connectedTo = computed(() => connectionStore.connectedTo);
 
+        const tcpPorts = computed(() => DeviceHandler.currentTcpPorts);
+
         const disconnectLabel = computed(() => {
             if (isVirtualMode.value) {
                 return i18n.getMessage("disconnectVirtual");
@@ -136,6 +140,10 @@ export default defineComponent({
             const path = connectedTo.value || "";
             if (path.startsWith("bluetooth")) {
                 return i18n.getMessage("disconnectBluetooth");
+            }
+            const bridge = tcpPorts.value.find((d) => d.path === path);
+            if (bridge) {
+                return i18n.getMessage("disconnectBridge", [bridge.displayName]);
             }
             if (/^(tcp|ws|wss):\/\//.test(path)) {
                 return i18n.getMessage("disconnectManual");
@@ -154,7 +162,7 @@ export default defineComponent({
             if (!path || path === "noselection") {
                 return null;
             }
-            const all = [...serialPorts.value, ...usbPorts.value, ...bluetoothPorts.value];
+            const all = [...serialPorts.value, ...usbPorts.value, ...bluetoothPorts.value, ...tcpPorts.value];
             return all.find((d) => d.path === path)?.displayName ?? null;
         });
 
@@ -195,7 +203,7 @@ export default defineComponent({
         // Saved targets connect in one click; the dialog below them is where they are managed.
         function buildManualItems() {
             return [
-                ...bookmarkItems(bookmarksStore.bookmarks),
+                ...bookmarkItems(bookmarksStore.bookmarks.filter((bookmark) => serial.canOpen(bookmark.url))),
                 {
                     label: i18n.getMessage("portsSelectManual"),
                     icon: "i-lucide-keyboard",
@@ -211,8 +219,9 @@ export default defineComponent({
                 ...portItems(DeviceHandler.showSerialOption ? serialPorts.value : [], "i-lucide-usb"),
                 ...portItems(DeviceHandler.showUsbOption ? usbPorts.value : [], "i-lucide-cpu"),
                 ...portItems(DeviceHandler.showBluetoothOption ? bluetoothPorts.value : [], "i-lucide-bluetooth"),
+                ...portItems(DeviceHandler.showTcpOption ? tcpPorts.value : [], "i-lucide-wifi"),
                 ...(expertMode && DeviceHandler.showVirtualMode ? buildVirtualItems() : []),
-                ...(expertMode && DeviceHandler.showManualMode ? buildManualItems() : []),
+                ...(DeviceHandler.manualModeAvailable() ? buildManualItems() : []),
             ];
         }
 
@@ -257,9 +266,11 @@ export default defineComponent({
                 return;
             }
 
-            // Guard against a persisted virtual/manual selection when expert mode is off.
-            const gatedModes = ["virtual", "manual"];
-            if (!isExpertModeEnabled() && gatedModes.includes(selectedDevice.value)) {
+            // Guard against a persisted selection the UI no longer offers.
+            const stale =
+                (selectedDevice.value === "virtual" && !isExpertModeEnabled()) ||
+                (selectedDevice.value === "manual" && !DeviceHandler.manualModeAvailable());
+            if (stale) {
                 DeviceHandler.devicePicker.selectedDevice = "noselection";
             }
 
@@ -267,6 +278,12 @@ export default defineComponent({
                 DeviceHandler.selectActivePort();
                 if (DeviceHandler.devicePicker.selectedDevice !== "noselection") {
                     connectDisconnect();
+                    return;
+                }
+                // A serial permission prompt can only fail where there is no Web Serial, so
+                // send the user to the network target dialog instead.
+                if (isNetworkOnlyBrowser()) {
+                    openConnectDialog("manual");
                     return;
                 }
                 await DeviceHandler.requestDevicePermission("serial");

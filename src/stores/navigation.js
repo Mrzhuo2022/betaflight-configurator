@@ -53,6 +53,9 @@ export const useNavigationStore = defineStore("navigation", () => {
         setConfig({ aiRailWidthPx: aiRailWidthPx.value });
     }
 
+    // Same contract for the log dialog.
+    const logDialogOpen = ref(false);
+
     function cleanup(callback) {
         GUI.tab_switch_cleanup(callback);
     }
@@ -68,6 +71,7 @@ export const useNavigationStore = defineStore("navigation", () => {
         setAiRailWidthPx,
         aiRailMinPx: AI_RAIL_MIN_PX,
         aiRailMaxPx: AI_RAIL_MAX_PX,
+        logDialogOpen,
         cleanup,
     };
 });

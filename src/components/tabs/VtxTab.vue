@@ -167,7 +167,7 @@
                                 @update:model-value="(v) => (vtxPortIdentifier = v)"
                                 :items="vtxPortOptions"
                                 :disabled="!vtxPortWritable || vtxPortFollowsOsd"
-                                class="w-36"
+                                class="min-w-40"
                             />
                         </SettingRow>
                     </div>
@@ -418,6 +418,7 @@ import { useVtx } from "../../composables/useVtx";
 import { useInterval } from "../../composables/useInterval";
 import { useSaving } from "../../composables/useSaving";
 import { useFeaturePort } from "@/composables/ports/useFeaturePort";
+import { usePortConflicts } from "@/composables/ports/usePortConflicts";
 import { PORT_NONE } from "@/composables/ports/portNames";
 import { useTranslation } from "i18next-vue";
 
@@ -477,21 +478,22 @@ export default defineComponent({
             options: vtxPortOptions,
             selectedIdentifier: vtxPortIdentifier,
             changed: vtxPortChanged,
+            conflict: vtxPortConflict,
             load: loadVtxPort,
             write: writeVtxPort,
             selectedProtocol: vtxProtocol,
             protocolOptions: vtxProtocolValues,
         } = useFeaturePort({
             setting: "vtx_uart",
-            functionName: ["TBS_SMARTAUDIO", "IRC_TRAMP", "VTX_MSP"],
             protocol: { setting: "vtx_type" },
         });
+
+        const { confirmPortConflicts } = usePortConflicts(() => [vtxPortConflict]);
 
         // An MSP VTX answers on the goggles' MSP link rather than a port of its own, so the
         // firmware falls back to the OSD's UART and the row follows the OSD tab, read-only.
         const { selectedIdentifier: osdPortIdentifier, load: loadOsdPort } = useFeaturePort({
             setting: "osd_uart",
-            functionName: "FRSKY_OSD",
         });
 
         const mspVtx = computed(() => vtxProtocol.value === "MSP");
@@ -579,19 +581,18 @@ export default defineComponent({
         });
 
         const handleSave = () =>
-            runSave(
-                async () => {
-                    await saveVtx(writeVtxPort);
-                    await loadVtxConfig();
-                    await loadVtxPort();
-                    await loadOsdPort();
-                },
-                {
-                    onError: (error) => {
-                        console.error("Error saving VTX configuration:", error);
-                    },
-                },
-            );
+            runSave(async () => {
+                // Warn before a pick that would take a port from another feature; a cancel here
+                // leaves the save untouched, before anything has been written to the FC.
+                if (!(await confirmPortConflicts())) {
+                    return;
+                }
+
+                await saveVtx(writeVtxPort);
+                await loadVtxConfig();
+                await loadVtxPort();
+                await loadOsdPort();
+            });
 
         // --- VTX Table count setters (with change tracking) ---
 

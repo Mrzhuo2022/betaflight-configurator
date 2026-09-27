@@ -22,6 +22,19 @@ OSD.getNumberOfProfiles = function () {
     return OSD.data.osd_profiles.number;
 };
 
+// Built-in grid size per video system. The canvas reported by the firmware overrides these for the
+// duration of a connection, see OSD.applyCanvas.
+const VIDEO_DEFAULTS = {
+    COLS: { PAL: 30, NTSC: 30, HD: 53 },
+    ROWS: { PAL: 16, NTSC: 13, HD: 20 },
+};
+
+// Restore the built-in grid sizes, so nothing reported by a previous connection carries over.
+OSD.resetVideoTables = function (d) {
+    d.VIDEO_COLS = { ...VIDEO_DEFAULTS.COLS };
+    d.VIDEO_ROWS = { ...VIDEO_DEFAULTS.ROWS };
+};
+
 // parsed fc output and output to fc, used by to OSD.msp.encode
 OSD.initData = function () {
     OSD.data = {
@@ -33,22 +46,9 @@ OSD.initData = function () {
         displayItems: [],
         timers: [],
         osd_profiles: {},
-        VIDEO_COLS: {
-            PAL: 30,
-            NTSC: 30,
-            HD: 53,
-        },
-        VIDEO_ROWS: {
-            PAL: 16,
-            NTSC: 13,
-            HD: 20,
-        },
-        VIDEO_BUFFER_CHARS: {
-            PAL: 480,
-            NTSC: 390,
-            HD: 1590,
-        },
+        canvas: null, // { cols, rows } as reported by MSP_OSD_CANVAS, if any
     };
+    OSD.resetVideoTables(OSD.data);
 };
 OSD.initData();
 
@@ -1013,33 +1013,33 @@ OSD.loadDisplayFields = function () {
         },
         ...(semver.lt(FC.CONFIG.apiVersion, API_VERSION_1_45)
             ? {
-                DISPLAY_NAME: {
-                    name: "DISPLAY_NAME",
-                    text: "osdTextElementDisplayName",
-                    desc: "osdDescElementDisplayName",
-                    defaultPosition: -77,
-                    draw_order: 350,
-                    positionable: true,
-                    preview(osdData) {
-                        return OSD.generateDisplayName(osdData, 1);
-                    },
-                },
-            }
+                  DISPLAY_NAME: {
+                      name: "DISPLAY_NAME",
+                      text: "osdTextElementDisplayName",
+                      desc: "osdDescElementDisplayName",
+                      defaultPosition: -77,
+                      draw_order: 350,
+                      positionable: true,
+                      preview(osdData) {
+                          return OSD.generateDisplayName(osdData, 1);
+                      },
+                  },
+              }
             : {}),
         ...(semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45)
             ? {
-                PILOT_NAME: {
-                    name: "PILOT_NAME",
-                    text: "osdTextElementPilotName",
-                    desc: "osdDescElementPilotName",
-                    defaultPosition: -77,
-                    draw_order: 350,
-                    positionable: true,
-                    preview(osdData) {
-                        return OSD.generatePilotName(osdData, 1);
-                    },
-                },
-            }
+                  PILOT_NAME: {
+                      name: "PILOT_NAME",
+                      text: "osdTextElementPilotName",
+                      desc: "osdDescElementPilotName",
+                      defaultPosition: -77,
+                      draw_order: 350,
+                      positionable: true,
+                      preview(osdData) {
+                          return OSD.generatePilotName(osdData, 1);
+                      },
+                  },
+              }
             : {}),
         ESC_RPM_FREQ: {
             name: "ESC_RPM_FREQ",
@@ -1475,6 +1475,19 @@ OSD.loadDisplayFields = function () {
             positionable: true,
             preview: "POSH RDY",
         },
+        PITOT_AIRSPEED: {
+            name: "PITOT_AIRSPEED",
+            text: "osdPitotAirSpeed",
+            desc: "osdPitotAirSpeed",
+            defaultPosition: -1,
+            draw_order: 675,
+            positionable: true,
+            preview(osdData) {
+                const UNIT_METRIC = OSD.constants.UNIT_TYPES.indexOf("METRIC");
+                const unit = FONT.symbol(osdData.unit_mode === UNIT_METRIC ? SYM.KPH : SYM.MPH);
+                return `${FONT.symbol(SYM.SPEED)}a30${unit}`;
+            },
+        },
     };
 
     if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_47)) {
@@ -1656,6 +1669,10 @@ OSD.chooseFields = function () {
         if (hasPositionHold) {
             OSD.constants.DISPLAY_FIELDS = OSD.constants.DISPLAY_FIELDS.concat([F.POS_HOLD_READY]);
         }
+
+        if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_49)) {
+            OSD.constants.DISPLAY_FIELDS = OSD.constants.DISPLAY_FIELDS.concat([F.PITOT_AIRSPEED]);
+        }
     }
     // Choose statistic fields
     // Nothing much to do here, I'm preempting there being new statistics
@@ -1750,6 +1767,32 @@ OSD.chooseFields = function () {
     if (semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_48)) {
         OSD.constants.WARNINGS = OSD.constants.WARNINGS.concat([F.AUTOPILOT_ABORT]);
     }
+};
+
+// Apply the canvas size reported by the firmware via MSP_OSD_CANVAS to the grid size tables.
+OSD.applyCanvas = function (d) {
+    d.state.requiresFbSmallFont = false;
+    OSD.resetVideoTables(d);
+    const canvas = d.canvas;
+    if (!canvas) {
+        return;
+    }
+
+    let videoType = "HD";
+    if (d.state.haveFbOsdConfigured) {
+        videoType = OSD.constants.VIDEO_TYPES[d.video_system];
+        if (videoType === "AUTO") {
+            videoType = "PAL";
+        }
+        if (!videoType) {
+            return;
+        }
+
+        d.state.requiresFbSmallFont = canvas.cols > 30; // 30 (or adjusted down) implies MAX7456 compatibility mode, not small font.
+    }
+
+    d.VIDEO_COLS[videoType] = canvas.cols;
+    d.VIDEO_ROWS[videoType] = canvas.rows;
 };
 
 OSD.updateDisplaySize = function () {
@@ -1889,14 +1932,24 @@ OSD.msp = {
 
         d.state = {};
         d.state.haveSomeOsd = d.flags !== 0;
+        d.state.haveFbOsdConfigured = bit_check(d.flags, 2);
         d.state.haveMax7456Configured = bit_check(d.flags, 4);
         d.state.haveFrSkyOSDConfigured = bit_check(d.flags, 3);
-        d.state.haveMax7456FontDeviceConfigured = d.state.haveMax7456Configured || d.state.haveFrSkyOSDConfigured;
+        d.state.haveMax7456FontDeviceConfigured =
+            d.state.haveMax7456Configured || d.state.haveFrSkyOSDConfigured || d.state.haveFbOsdConfigured;
         d.state.haveAirbotTheiaOsdDevice = bit_check(d.flags, 7) && semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_47);
-        d.state.isMax7456FontDeviceDetected = bit_check(d.flags, 5);
+        const osdDeviceDetected = bit_check(d.flags, 5);
+        // FbOsd is immediately ready to receive font upload even if display is not yet synced.
+        d.state.isMax7456FontDeviceDetected =
+            ((d.state.haveMax7456Configured || d.state.haveFrSkyOSDConfigured || d.state.haveAirbotTheiaOsdDevice) &&
+                osdDeviceDetected) ||
+            d.state.haveFbOsdConfigured;
         d.state.haveOsdFeature = bit_check(d.flags, 0);
         d.state.isOsdSlave = bit_check(d.flags, 1);
         d.state.isMspDevice = bit_check(d.flags, 6) && semver.gte(FC.CONFIG.apiVersion, API_VERSION_1_45);
+
+        // Must run before element positions are decoded, as they depend on the column count.
+        OSD.applyCanvas(d);
 
         d.displayItems = [];
         d.statItems = [];
@@ -2030,6 +2083,7 @@ OSD.msp = {
     decodeVirtual() {
         const d = OSD.data;
 
+        OSD.resetVideoTables(d);
         d.displayItems = [];
         d.statItems = [];
         d.warnings = [];
